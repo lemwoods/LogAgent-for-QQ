@@ -47,8 +47,14 @@ public sealed class OfficialBotConnection : IBotConnection
     private string? _sessionId;
     private string? _selfOpenId;
     private long _lastSeq;
+    private long _lastAckTicks;          // 最近一次心跳 ACK（UTC ticks），用于识别半开连接
+    private DateTimeOffset _connectedAt; // 当前 WS 握手成功时间，用于避免偶发重连时退避一直停在 60s
     private readonly ConcurrentDictionary<string, int> _replyCount = [];     // 每个 msg_id 回复序号（≤5）
     private readonly ConcurrentDictionary<string, DateTimeOffset> _seenMessages = []; // 平台可能重复推送同一 msg_id
+
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan TokenTimeout = TimeSpan.FromSeconds(30);
 
     public string Name => $"QQ官方Bot ({_config.AppId}{(_config.Sandbox ? " 沙箱" : "")})";
     public bool IsConnected => _ws is { State: WebSocketState.Open };
@@ -301,26 +307,46 @@ public sealed class OfficialBotConnection : IBotConnection
         var backoff = TimeSpan.FromSeconds(1);
         while (!ct.IsCancellationRequested)
         {
-            var cleanExit = false;
+            _connectedAt = default;
             try
             {
+                Log($"WS 连接尝试（退避 {backoff.TotalSeconds:F0}s）");
                 await ConnectOnceAsync(gatewayUrl, ct);
-                cleanExit = true;
+                // 收到 Close 帧正常退出；下一次仍从最小退避开始。
                 backoff = TimeSpan.FromSeconds(1);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                Log($"WS 断开：{ex.Message}，{backoff.TotalSeconds}s 后重连");
+                // ConnectAsync / 握手 / token 刷新各自有超时；这里必须重试而不是让 worker 退出。
+                Log($"WS 连接/握手超时，{backoff.TotalSeconds:F0}s 后重连");
                 await Task.Delay(backoff, ct);
-                backoff = backoff.TotalSeconds < 60
-                    ? TimeSpan.FromMilliseconds(backoff.TotalMilliseconds * 2)
-                    : TimeSpan.FromSeconds(60);
+                backoff = NextBackoff(backoff);
+            }
+            catch (OperationCanceledException)
+            {
+                break; // 服务停止
+            }
+            catch (Exception ex)
+            {
+                // 连接曾经稳定超过 1 分钟，说明不是连续失败，重置退避；
+                // 否则保留指数退避，避免网关连续 op9 时热循环。
+                if (_connectedAt != default && DateTimeOffset.UtcNow - _connectedAt > TimeSpan.FromMinutes(1))
+                    backoff = TimeSpan.FromSeconds(1);
+                Log($"WS 断开：{ex.Message}，{backoff.TotalSeconds:F0}s 后重连");
+                await Task.Delay(backoff, ct);
+                backoff = NextBackoff(backoff);
             }
 
-            // 正常断开也稍等，避免网关连续 op9 时形成无间隔热循环。
-            if (cleanExit) await Task.Delay(TimeSpan.FromSeconds(2), ct);
+            // 网关连续 op7/op9 时也留一个最小间隔，避免无间隔热循环。
+            if (ct.IsCancellationRequested) break;
+            await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
     }
+
+    private static TimeSpan NextBackoff(TimeSpan current) =>
+        current.TotalSeconds < 60
+            ? TimeSpan.FromMilliseconds(Math.Min(60_000, current.TotalMilliseconds * 2))
+            : TimeSpan.FromSeconds(60);
 
     private async Task ConnectOnceAsync(string gatewayUrl, CancellationToken ct)
     {
@@ -331,14 +357,23 @@ public sealed class OfficialBotConnection : IBotConnection
         _ws = new ClientWebSocket();
         _ws.Options.SetRequestHeader("Authorization", $"QQBot {_accessToken}");
         _ws.Options.SetRequestHeader("X-Union-Appid", _config.AppId);
-        await _ws.ConnectAsync(new Uri(gatewayUrl), ct);
+
+        // ConnectAsync 在弱网/DNS 卡住时可能长期不返回；必须有上限，否则 worker 会永久停在“重连中”。
+        using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        connectCts.CancelAfter(ConnectTimeout);
+        await _ws.ConnectAsync(new Uri(gatewayUrl), connectCts.Token);
+        _connectedAt = DateTimeOffset.UtcNow;
+        Interlocked.Exchange(ref _lastAckTicks, DateTimeOffset.UtcNow.UtcTicks);
         Log("WS 已连接网关");
 
-        // 读取 Hello（op 10）
-        var hello = await ReceiveJsonAsync(ct);
+        // 读取 Hello（op 10）并完成 Identify/Resume；握手也不能无限等。
+        using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        handshakeCts.CancelAfter(HandshakeTimeout);
+        var hello = await ReceiveJsonAsync(handshakeCts.Token);
         if (hello is null || hello.Value.TryGetProperty("op", out var op) && op.GetInt32() != 10)
             throw new InvalidOperationException("网关握手失败：未收到 op10 Hello");
-        var heartbeatInterval = ReadInt(hello.Value.GetProperty("d"), "heartbeat_interval", 40000);
+        var heartbeatInterval = Math.Clamp(
+            ReadInt(hello.Value.GetProperty("d"), "heartbeat_interval", 40000), 10_000, 120_000);
 
         // Identify（op 2）或 Resume（op 6）
         if (_sessionId is null)
@@ -358,14 +393,15 @@ public sealed class OfficialBotConnection : IBotConnection
                         ["$device"] = "LogAgent",
                     },
                 },
-            }, ct);
+            }, handshakeCts.Token);
         }
         else
         {
-            await SendJsonAsync(new { op = 6, d = new { token = $"QQBot {_accessToken}", session_id = _sessionId, seq = _lastSeq } }, ct);
+            await SendJsonAsync(new { op = 6, d = new { token = $"QQBot {_accessToken}", session_id = _sessionId, seq = _lastSeq } },
+                handshakeCts.Token);
         }
 
-        // 心跳任务
+        // 心跳任务：除了发 op1，还检查 ACK。半开连接不会抛异常，只能靠 ACK 超时发现。
         using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var heartbeat = Task.Run(async () =>
         {
@@ -373,6 +409,16 @@ public sealed class OfficialBotConnection : IBotConnection
             {
                 await Task.Delay(heartbeatInterval, heartbeatCts.Token);
                 await SendJsonAsync(new { op = 1, d = (long?)_lastSeq }, heartbeatCts.Token);
+
+                var ackTicks = Interlocked.Read(ref _lastAckTicks);
+                if (ackTicks > 0 &&
+                    DateTimeOffset.UtcNow - new DateTimeOffset(ackTicks, TimeSpan.Zero) >
+                    TimeSpan.FromMilliseconds(heartbeatInterval * 2.5))
+                {
+                    Log("心跳 ACK 超时，主动断开重连");
+                    _ws?.Abort();
+                    return;
+                }
             }
         }, heartbeatCts.Token);
 
@@ -435,6 +481,7 @@ public sealed class OfficialBotConnection : IBotConnection
                 }
                 break;
             case 11: // Heartbeat ACK
+                Interlocked.Exchange(ref _lastAckTicks, DateTimeOffset.UtcNow.UtcTicks);
                 break;
             case 7: // Reconnect
                 Log("服务端要求重连");
@@ -745,14 +792,18 @@ public sealed class OfficialBotConnection : IBotConnection
 
         // 令牌接口偶尔只返回 180s；固定“提前 5 分钟刷新”会导致每次调用都刷新，
         // 甚至互相顶掉会话。这里按实际 TTL 动态计算提前量，并串行化刷新。
-        await _tokenGate.WaitAsync(ct);
+        // 同时给等待锁和 HTTP 请求设上限，避免持有锁的请求卡死后所有发送/重连永久等待。
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TokenTimeout);
+        var tokenCt = timeoutCts.Token;
+        await _tokenGate.WaitAsync(tokenCt);
         try
         {
             if (HasValidToken) return;
             using var resp = await _http.PostAsJsonAsync(TokenEndpoint,
-                new { appId = _config.AppId, clientSecret = _config.AppSecret }, ct);
+                new { appId = _config.AppId, clientSecret = _config.AppSecret }, tokenCt);
             resp.EnsureSuccessStatusCode();
-            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(tokenCt));
             _accessToken = doc.RootElement.GetProperty("access_token").GetString()
                 ?? throw new InvalidOperationException("获取 access_token 失败");
 
