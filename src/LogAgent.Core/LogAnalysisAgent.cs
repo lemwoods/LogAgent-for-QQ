@@ -218,11 +218,12 @@ public sealed class LogAnalysisAgent(
 
         if (stats.TotalLines == 0)
             return "这段内容没有可识别的行，看起来不是日志。把日志文本直接发给我试试～";
-        if (stats.ErrorLike == 0 && stats.TopErrors.Count == 0)
-            return $"日志共 {stats.TotalLines} 行，没有发现 ERROR/FATAL 级别或异常堆栈，看起来运行正常 ✅\n级别分布：{DescribeLevels(stats)}";
 
         // ---- Step 2: 降采样材料 ----
         var material = BuildMaterial(stats, maxChars: 6000);
+        // 没有任何错误簇/堆栈时，别让模型只拿到一行级别统计——把原文片段一并给它判断
+        if (stats.TopErrors.Count == 0 && stats.StackTraces.Count == 0)
+            material += "\n\n原始日志片段（未识别出错误级别，供你判断）：\n" + Shorten(logText.Trim(), 4000);
         Log($"送入模型的材料约 {material.Length} 字符（已降采样）");
 
         // ---- Step 2.5: 知识库相似案例（对照判断命中）----
@@ -321,7 +322,6 @@ public sealed class LogAnalysisAgent(
         var material = string.Join("\n\n", parts);
         return material.Length > maxChars ? material[..maxChars] + "\n…(材料截断)" : material;
     }
-
     private static string DescribeLevels(LogStats.Stats stats) =>
         stats.LevelCounts.Count == 0
             ? "未识别出标准级别标记"

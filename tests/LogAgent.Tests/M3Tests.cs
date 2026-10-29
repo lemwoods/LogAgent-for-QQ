@@ -204,13 +204,16 @@ public class LogAnalysisAgentTests
         Assert.Contains("技术评审", inputs[1]);
     }
 
+    /// <summary>没有 ERROR 时不再由代码判「正常」：原文交给模型判断（项目规则：AI 负责结论）。</summary>
     [Fact]
-    public async Task Analyze_CleanLog_SkipsLlm()
+    public async Task Analyze_CleanLog_StillAsksModel()
     {
         var (agent, inputs) = Make();
         var reply = await agent.AnalyzeAsync("INFO all good\nINFO fine\n");
-        Assert.Contains("没有发现 ERROR", reply);
-        Assert.Empty(inputs);
+
+        Assert.NotEmpty(inputs);
+        Assert.Contains("INFO all good", string.Concat(inputs)); // 原文进了材料，模型有据可判
+        Assert.DoesNotContain("没有发现 ERROR", reply);
     }
 
     [Fact]
