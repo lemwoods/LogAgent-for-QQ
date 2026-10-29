@@ -31,16 +31,20 @@ public sealed class CircuitState
 public sealed class ModelRouter
 {
     private readonly Func<ProviderConfig, IChatModelClient> _clientFactory;
+    private readonly Func<ProviderConfig, IEmbeddingsClient> _embeddingsFactory;
     private readonly ConcurrentDictionary<string, CircuitState> _circuits = new();
     private readonly ConcurrentDictionary<string, IChatModelClient> _clients = new();
+    private readonly ConcurrentDictionary<string, IEmbeddingsClient> _embeddingClients = new();
 
     public AppConfig Config { get; }
     public event EventHandler<RouterMeterEvent>? Metered;
 
-    public ModelRouter(AppConfig config, Func<ProviderConfig, IChatModelClient>? clientFactory = null)
+    public ModelRouter(AppConfig config, Func<ProviderConfig, IChatModelClient>? clientFactory = null,
+        Func<ProviderConfig, IEmbeddingsClient>? embeddingsFactory = null)
     {
         Config = config;
         _clientFactory = clientFactory ?? (p => new OpenAiCompatClient(p));
+        _embeddingsFactory = embeddingsFactory ?? (p => new OpenAiEmbeddingsClient(p));
     }
 
     /// <summary>解析任务类型的 provider 尝试顺序（含兜底）。</summary>
@@ -136,23 +140,39 @@ public sealed class ModelRouter
     public async Task<float[]?> EmbedAsync(string text, CancellationToken ct = default)
     {
         var chain = ResolveChain(TaskType.Embedding);
-        if (chain.Count == 0) return null;
-        var provider = Config.Providers.First(p => p.Id == chain[0]);
-        if (string.IsNullOrEmpty(provider.EmbeddingModel)) return null;
-        var client = new OpenAiEmbeddingsClient(provider);
-        try
+        foreach (var providerId in chain)
         {
-            var vector = await client.EmbedAsync(text, ct);
-            Metered?.Invoke(this, new RouterMeterEvent(TaskType.Embedding, provider.Id,
-                provider.EmbeddingModel!, true, 0, 0, TimeSpan.Zero));
-            return vector;
+            var provider = Config.Providers.First(p => p.Id == providerId);
+            if (string.IsNullOrEmpty(provider.EmbeddingModel)) continue;
+
+            var state = _circuits.GetOrAdd(providerId, _ => new CircuitState());
+            if (state.IsOpen(DateTimeOffset.UtcNow, Config.CircuitBreakerRecoverySeconds)) continue;
+
+            var client = _embeddingClients.GetOrAdd(providerId, _ => _embeddingsFactory(provider));
+            try
+            {
+                var vector = await client.EmbedAsync(text, ct);
+                state.ConsecutiveFailures = 0;
+                state.OpenedAt = null;
+                Metered?.Invoke(this, new RouterMeterEvent(TaskType.Embedding, provider.Id,
+                    provider.EmbeddingModel!, true, 0, 0, TimeSpan.Zero));
+                return vector;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                state.ConsecutiveFailures++;
+                if (state.ConsecutiveFailures >= Config.CircuitBreakerThreshold)
+                    state.OpenedAt = DateTimeOffset.UtcNow;
+                Metered?.Invoke(this, new RouterMeterEvent(TaskType.Embedding, provider.Id,
+                    provider.EmbeddingModel!, false, 0, 0, TimeSpan.Zero, ex.Message));
+            }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Metered?.Invoke(this, new RouterMeterEvent(TaskType.Embedding, provider.Id,
-                provider.EmbeddingModel!, false, 0, 0, TimeSpan.Zero, ex.Message));
-            return null; // 向量失败降级，不阻断主流程
-        }
+
+        return null; // 全部失败：降级为纯关键词检索，不阻断主流程
     }
 
     /// <summary>查询 provider 熔断状态（UI 看板用）。</summary>

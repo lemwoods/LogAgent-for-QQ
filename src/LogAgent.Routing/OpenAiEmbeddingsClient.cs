@@ -5,7 +5,12 @@ using LogAgent.Shared.Configuration;
 namespace LogAgent.Routing;
 
 /// <summary>OpenAI 兼容 /embeddings 客户端。</summary>
-public sealed class OpenAiEmbeddingsClient(ProviderConfig config, HttpClient? http = null)
+public interface IEmbeddingsClient
+{
+    Task<float[]> EmbedAsync(string text, CancellationToken ct = default);
+}
+
+public sealed class OpenAiEmbeddingsClient(ProviderConfig config, HttpClient? http = null) : IEmbeddingsClient
 {
     private readonly HttpClient _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
 

@@ -69,6 +69,21 @@ public static class AppConfigStore
         var tmp = path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(config, JsonOpts));
         File.Move(tmp, path, overwrite: true);
+        RestrictToOwner(path);
+    }
+
+    /// <summary>配置文件含 API Key，仅允许属主读写（Unix）。Windows 依赖 ACL，不做额外处理。</summary>
+    private static void RestrictToOwner(string path)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        try
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            // 权限收紧失败不影响配置可用性，交给上层日志
+        }
     }
 
     /// <summary>备份当前配置（返回备份路径；配置不存在时返回 null）。</summary>
@@ -78,6 +93,7 @@ public static class AppConfigStore
         if (!File.Exists(path)) return null;
         var backup = $"{path}.bak-{DateTime.Now:yyyyMMdd-HHmmss}";
         File.Copy(path, backup, overwrite: true);
+        RestrictToOwner(backup);
         return backup;
     }
 

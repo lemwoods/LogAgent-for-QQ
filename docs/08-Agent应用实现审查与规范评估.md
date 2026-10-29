@@ -86,13 +86,16 @@ ReAct 的正确语义是「工具失败 = 一条 observation」，不是终止�
 
 ### P2 级欠账
 
-| 项 | 证据 | 影响 |
-|---|---|---|
-| L2 关键事实未实现 | 仅 `src/LogAgent.Shared/Configuration/Models.cs:17` 注释提到 L1/L2 | 跨会话偏好/结论无法结构化沉淀 |
-| Embedding 无故障切换 | `src/LogAgent.Routing/ModelRouter.cs:117` 只取 `chain[0]` | Embedding provider 挂了直接退回纯关键词，用户无感知 |
-| 配置明文 + 无权限 | `AppConfigStore.Save`（`src/LogAgent.Shared/Configuration/AppConfigStore.cs:61`）未设文件模式，`ApiKey` 明文 | Linux 桌面 `~/.config` 为 755 时 `config.json` 即 644 |
-| 文档与代码漂移 | `docs/02:87` 写 MAF + Semantic Kernel，实际是手写 Router + OpenAI 兼容客户端；无一处引用 MAF/SK | 后来者被误导 |
-| 规划中的时间窗切片未实现 | `LogTools` 无时间窗相关代码 | 大日志按时间定位不可用 |
+> 状态（2026-10-30）：配置权限、Embedding 故障切换、文档漂移已修；L2 关键事实与时间窗切片仍未做。
+> 详见 `docs/09` §6.12。
+
+| 项 | 证据 | 影响 | 状态 |
+|---|---|---|---|
+| L2 关键事实未实现 | 仅 `src/LogAgent.Shared/Configuration/Models.cs:17` 注释提到 L1/L2 | 跨会话偏好/结论无法结构化沉淀 | ⬜ 未做 |
+| Embedding 无故障切换 | `src/LogAgent.Routing/ModelRouter.cs:117` 只取 `chain[0]` | Embedding provider 挂了直接退回纯关键词，用户无感知 | ✅ 已修 |
+| 配置明文 + 无权限 | `AppConfigStore.Save`（`src/LogAgent.Shared/Configuration/AppConfigStore.cs:61`）未设文件模式，`ApiKey` 明文 | Linux 桌面 `~/.config` 为 755 时 `config.json` 即 644 | ✅ 已修（0600） |
+| 文档与代码漂移 | `docs/02:87` 写 MAF + Semantic Kernel，实际是手写 Router + OpenAI 兼容客户端；无一处引用 MAF/SK | 后来者被误导 | ✅ 已修 |
+| 规划中的时间窗切片未实现 | `LogTools` 无时间窗相关代码 | 大日志按时间定位不可用 | ⬜ 未做 |
 
 ---
 

@@ -79,7 +79,9 @@
 | **日志分析 Agent**   | Plan-Execute + Reflection | 接收日志 → 制定分析计划（解析→统计→异常识别→检索知识库→根因推断）→ 逐步执行 → 反思校验结论 → 产出报告 |
 | **学习 Agent**     | Reflection                | 处理"未知问题"：整理用户回答/网页抓取结果 → 去噪提炼 → 写入知识库候选区                   |
 
-- **框架**：Microsoft Agent Framework（编排、中间件 guardrails）+ Semantic Kernel（插件、prompt 模板、记忆连接器）。
+- **框架**：自研 `ModelRouter`（任务分流 / 熔断 / 重试 / 消息级预算）+ OpenAI 兼容客户端。
+  > 实现阶段未引入 MAF / Semantic Kernel：两者会带来较重的编排抽象，而本项目需要的是「薄路由 + 工具循环」。
+  > 本行原写 MAF + SK（规划期选型），已按实际实现更正。
 - **工具集**（SK 插件，每个 3–7 个函数）：
   - `LogTools`：解析（多格式：纯文本/JSON/log4j/自定义正则）、按级别过滤、时间窗切片、异常聚类；
   - `KnowledgeTools`：知识库检索（混合检索：向量+关键词）、写入候选知识；
@@ -131,6 +133,9 @@ L0 原文（全量保存，训练数据原料）
    └─→ L1 摘要：切段时用便宜模型生成（做了什么/结论/关键实体）→ 情景记忆
          └─→ L2 关键事实：结构化抽取（用户偏好、结论、错误模式）→ 语义记忆候选
 ```
+
+> 实现现状（2026-10-30）：**L0 原文 + L1 摘要已落地**；L2 结构化关键事实尚未实现，
+> 作为 P2 待办记在 `docs/08`。当前跨会话记忆靠 L1 摘要 + 知识库检索。
 
 - **工作窗口只装**：最近 N 条 L0 原文 + 本会话 L1 摘要 + 检索命中的 L1/L2；
 - 摘要/抽取走模型路由器（低成本模型），失败可重试，不影响主流程；
@@ -244,12 +249,12 @@ L0 原文（全量保存，训练数据原料）
 
 | 层        | 选型                                          | 理由                     |
 | -------- | ------------------------------------------- | ---------------------- |
-| 运行时      | .NET 8 (LTS)                                | 长期支持，C# 桌面首选           |
-| UI       | WPF + CommunityToolkit.Mvvm                 | 成熟、资料多、好维护             |
-| Agent 框架 | Microsoft Agent Framework + Semantic Kernel | 微软官方战略方向，C# 原生，MCP 支持  |
-| 模型接入     | OpenAI 兼容 `IChatClient` 抽象                  | 一套代码接任意 provider       |
+| 运行时      | .NET 10 (LTS)                               | 长期支持；WPF / Avalonia / 无头三种宿主共用运行时 |
+| UI       | WPF（Windows 全功能）+ Avalonia（跨平台桌面）+ Headless | 双壳共用 `AgentHost`；Android 走无头 + APK 壳 |
+| Agent 框架 | 自研 `ModelRouter` + 工具循环（未用 MAF / SK） | 需要的是薄路由与可观测性，框架抽象反而增加依赖 |
+| 模型接入     | 自研 `IChatModelClient` + OpenAI 兼容 HTTP       | 一套代码接任意 provider；支持推理模型与重试 |
 | 协议       | 自研 OneBot11 适配器（WebSocket）+ 官方 Bot SDK 封装   | 双协议统一 `ChannelManager` + `IBotConnection` |
-| 存储       | SQLite + FTS5 + sqlite-vec                  | 单文件零运维，本地优先；向量+关键词混合检索 |
+| 存储       | SQLite + FTS5（向量为进程内余弦，未用 sqlite-vec） | 单文件零运维；词法 + 向量 + RRF 融合 |
 | 网页抓取     | HtmlAgilityPack + 正文提取                      | 学习 Agent 的 WebTools 底座 |
 | 日志解析     | Serilog（应用日志）+ 自研规则解析器                      | 支持多格式 + 自定义正则          |
 | 可观测      | OpenTelemetry + 本地 trace 存储（SQLite）         | 每步 Agent 轨迹可回放         |
