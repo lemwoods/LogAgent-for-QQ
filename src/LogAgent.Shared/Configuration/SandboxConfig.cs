@@ -11,6 +11,12 @@ public sealed class SandboxConfig
 {
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// 是否启用命令白名单/黑名单校验。开启 AI 审核（`AgentConfig.ShellReviewEnabled`）时会被自动关闭——
+    /// 命令是否放行交给模型判断，沙箱仍保留超时、输出上限与路径守卫。设为 true 可强制恢复名单校验。
+    /// </summary>
+    public bool CommandCheckEnabled { get; set; } = true;
+
     /// <summary>Shell 命令超时（秒），超时杀进程树。</summary>
     public int CommandTimeoutSeconds { get; set; } = 30;
 

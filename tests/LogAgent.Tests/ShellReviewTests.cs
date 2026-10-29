@@ -34,7 +34,8 @@ public class ShellReviewTests : IDisposable
     [Fact]
     public async Task AllowVerdict_ParsesReason()
     {
-        var verdict = await new ShellCommandReviewer(Router("ALLOW 只读检索")).ReviewAsync("grep -n error app.log");
+        var verdict = await new ShellCommandReviewer(Router("ALLOW 只读检索"))
+            .ReviewAsync("grep -n error app.log", "定位报错行");
 
         Assert.True(verdict.Allow);
         Assert.Contains("只读", verdict.Reason);
@@ -43,7 +44,8 @@ public class ShellReviewTests : IDisposable
     [Fact]
     public async Task DenyVerdict_Blocks()
     {
-        var verdict = await new ShellCommandReviewer(Router("DENY 会修改系统配置")).ReviewAsync("systemctl stop nginx");
+        var verdict = await new ShellCommandReviewer(Router("DENY 会修改系统配置"))
+            .ReviewAsync("systemctl stop nginx", "重启服务");
 
         Assert.False(verdict.Allow);
         Assert.Contains("修改系统配置", verdict.Reason);
@@ -52,14 +54,15 @@ public class ShellReviewTests : IDisposable
     [Fact]
     public async Task ReviewFailure_DeniesByDefault()
     {
-        var verdict = await new ShellCommandReviewer(Router("ok", succeed: false)).ReviewAsync("ls");
+        var verdict = await new ShellCommandReviewer(Router("ok", succeed: false))
+            .ReviewAsync("ls", "看目录");
 
         Assert.False(verdict.Allow);
         Assert.Contains("审核不可用", verdict.Reason);
     }
 
     [Fact]
-    public async Task Hub_WhenReviewDenies_DoesNotRunShell()
+    public async Task Hub_PassesPurposeToReviewer_AndDoesNotRunShellWhenDenied()
     {
         var builtin = Path.Combine(_dir, "builtin");
         var user = Path.Combine(_dir, "user");
@@ -68,14 +71,22 @@ public class ShellReviewTests : IDisposable
         var registry = new SkillRegistry(builtin, user);
         registry.Reload();
 
+        string? seenPurpose = null;
         var hub = new ToolHostHub(
             registry, null, new AppConfig(),
             new FileTools(_dir, sandboxRunner: null),
-            shellReviewer: (_, _) => Task.FromResult((false, "测试拒绝")));
+            shellReviewer: (_, purpose, _) =>
+            {
+                seenPurpose = purpose;
+                return Task.FromResult((false, "测试拒绝"));
+            });
 
         var result = await hub.ExecuteToolAsync(
-            FileTools.RunShellTool, """{"command":"rm -rf /"}""", new SkillsConfig());
+            FileTools.RunShellTool,
+            """{"command":"rm -rf /","purpose":"确认目录内容"}""",
+            new SkillsConfig());
 
+        Assert.Equal("确认目录内容", seenPurpose);
         Assert.Contains("未通过安全审核", result);
         Assert.Contains("测试拒绝", result);
     }

@@ -42,6 +42,32 @@ public class AgentHostTests : IDisposable
     }
 
     [Fact]
+    public async Task Ensure_WithShellReview_DisablesCommandWhitelist()
+    {
+        var config = AppConfigStore.Load();
+        config.Agent.ShellReviewEnabled = true;
+        AppConfigStore.Save(config); // AgentHost.Build 会重新从磁盘加载，必须先落盘
+        var host = new AgentHost(AppConfigStore.Load(), MakeRouter());
+        host.Ensure();
+
+        Assert.False(host.Sandbox!.Config.CommandCheckEnabled); // 放行交给 AI 审核
+        await host.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Ensure_WithoutShellReview_KeepsCommandWhitelist()
+    {
+        var config = AppConfigStore.Load();
+        config.Agent.ShellReviewEnabled = false;
+        AppConfigStore.Save(config);
+        var host = new AgentHost(AppConfigStore.Load(), MakeRouter());
+        host.Ensure();
+
+        Assert.True(host.Sandbox!.Config.CommandCheckEnabled);
+        await host.DisposeAsync();
+    }
+
+    [Fact]
     public async Task Ensure_BuildsRuntimeAndStores()
     {
         var host = new AgentHost(AppConfigStore.Load(), MakeRouter());

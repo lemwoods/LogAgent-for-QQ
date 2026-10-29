@@ -19,7 +19,7 @@ public sealed class ToolHostHub(
     FileTools? fileTools = null,
     WebTools? webTools = null,
     Func<string, int, CancellationToken, Task<string>>? knowledgeSearch = null,
-    Func<string, CancellationToken, Task<(bool Allow, string Reason)>>? shellReviewer = null) : ISkillToolHost
+    Func<string, string, CancellationToken, Task<(bool Allow, string Reason)>>? shellReviewer = null) : ISkillToolHost
 {
     /// <summary>读取技能说明的内置工具名。</summary>
     public const string ReadSkillTool = "read_skill";
@@ -104,8 +104,9 @@ public sealed class ToolHostHub(
             {
                 var command = ReadStringArg(argumentsJson, "command");
                 if (string.IsNullOrWhiteSpace(command)) return "错误：缺少必填参数 command";
+                var purpose = ReadStringArg(argumentsJson, "purpose");
 
-                var (allow, reason) = await shellReviewer(command, ct);
+                var (allow, reason) = await shellReviewer(command, purpose, ct);
                 if (!allow)
                     return string.IsNullOrWhiteSpace(reason)
                         ? "错误：命令未通过安全审核"

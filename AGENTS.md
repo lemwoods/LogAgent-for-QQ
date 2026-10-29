@@ -118,6 +118,7 @@ LogAgent.App (WPF)  /  LogAgent.Desktop (Avalonia)  /  LogAgent.Headless
 - **不擅自改 CI**：工作流的触发条件、job 结构变更要说明理由
 - **破坏性操作先确认**：删文件、改数据库 schema、强推分支
 - **沙箱默认值变更要谨慎**：Windows 白/黑名单必须与 v0.7.0 逐条一致（`M3Tests` 有抽样守护，改动时需自查全量）
+- **命令名单在 AI 审核开启时失效**：`AgentConfig.ShellReviewEnabled`（默认 true）会把 `SandboxConfig.CommandCheckEnabled` 置 false，`run_shell` 的放行判断交给模型；需要名单兜底时关闭审核或显式设回 true
 
 ## 8. 交付沟通
 

@@ -47,10 +47,10 @@ public sealed class FileTools(string filesDir, SandboxRunner? sandboxRunner = nu
         {
             var shell = PlatformShell.Current;
             tools.Add(new ChatToolDefinition(RunShellTool,
-                $"在 files 目录执行{shell.DisplayName}命令做日志分析（工作目录即文件保存目录，用相对文件名即可）。" +
+                $"在 files 目录执行{shell.DisplayName}命令做日志分析或查系统状态（工作目录即文件保存目录，用相对文件名即可）。" +
                 shell.RunShellHint +
-                "超时约 30 秒、输出超限自动截断。参数：command。",
-                """{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令（工作目录为 files 目录）"}},"required":["command"]}"""));
+                "超时约 30 秒、输出超限自动截断。执行前会由安全审核判断是否放行，所以必须说明目的。参数：command；purpose。",
+                """{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令（工作目录为 files 目录）"},"purpose":{"type":"string","description":"一句话说明为什么执行它、想看什么/解决什么，供安全审核判断"}},"required":["command","purpose"]}"""));
         }
         return tools;
     }
@@ -228,8 +228,9 @@ public sealed class FileTools(string filesDir, SandboxRunner? sandboxRunner = nu
             return "错误：shell 工具未启用（沙箱已关闭；可在配置文件的 Sandbox.Enabled 打开）";
         var command = GetString(args, "command").Trim();
         if (command.Length == 0) return "错误：缺少必填参数 command";
+        var purpose = GetString(args, "purpose").Trim();
 
-        EmitLog($"run_shell：{command}");
+        EmitLog(purpose.Length > 0 ? $"run_shell：{command}（{purpose}）" : $"run_shell：{command}");
         var result = await sandboxRunner.RunAsync(filesDir, command, ct);
         var output = result.Output.Length > MaxShellChars
             ? result.Output[..MaxShellChars] + "\n……（输出超限已截断）"

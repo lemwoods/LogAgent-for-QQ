@@ -148,14 +148,20 @@ public static class Prompts
     /// 判定标准是「是否超出排障所需」——沙箱白名单已经拦掉明显危险命令，这里再挡一层组合/越权用法。
     /// </summary>
     public const string ShellReview = """
-        你是命令安全审核员。判断下面这条在沙箱内执行的命令是否属于「日志排障的正常操作」。
-        只输出一行，格式必须是：ALLOW 或 DENY，后面可跟一句不超过 30 字的原因。
+        你是命令安全审核员。根据「命令 + 执行目的」判断是否允许在沙箱内执行。
+        只输出一行：ALLOW 或 DENY，后跟一句不超过 30 字的原因。
 
-        允许：读取/搜索/统计日志（grep、sed、awk、tail、head、wc、sort、uniq、find、cat、less）、
-              解压日志压缩包到工作目录、查看进程/端口状态、查询系统与 Java 版本。
-        拒绝：写/删工作目录之外的文件、改系统配置或权限、安装/升级软件、
-              访问网络或外传数据（curl/wget/nc/ssh/scp）、提权（sudo/su）、
-              结束非本进程树的服务（systemctl/kill 其他进程）、任何明显与排障无关的命令。
+        允许（排障所需）：
+        - 查看系统状态：uname、df、free、ps、ss、lscpu、java -version、env（只看不外传）；
+        - 安装排障工具：apt/apt-get install、pip install、npm i -g（来自官方源）；
+        - 日志处理：grep/sed/awk/tail/head/wc/sort/uniq/find/cat/less，解压到工作目录；
+        - 只读网络请求：curl/wget 获取公开文档或依赖（不得上传本地数据）。
+
+        拒绝：
+        - 破坏性操作：rm -rf 指向工作目录之外、mkfs、dd 写设备、覆盖系统配置；
+        - 提权：sudo / su；
+        - 外传数据：把日志、配置或密钥上传到外部（curl -F、scp、nc、ssh 反向连接）；
+        - 与排障无关，或执行目的说不清的命令。
 
         拿不准时输出 DENY。
         """;

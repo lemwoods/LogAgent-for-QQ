@@ -159,6 +159,8 @@ public sealed class AgentHost : IAsyncDisposable
         _sessions = new SessionManager(new SessionStore(db), Router, Config.Agent);
         _sessions.SessionLog += (_, line) => Log($"[会话] {line}");
 
+        // AI 审核开启时，命令白/黑名单不再作为闸门（审核通过即放行）；沙箱仍保留超时、输出上限与路径守卫
+        if (Config.Agent.ShellReviewEnabled) Config.Sandbox.CommandCheckEnabled = false;
         _sandbox = new SandboxService(Config.Sandbox, AppConfigStore.GetSandboxDirectory());
         _sandbox.Audited += (_, e) => Log(
             $"[沙箱] {(e.Allowed ? $"{e.Command}" : $"拒绝 {e.Command}：{e.RejectReason}")}");
@@ -247,12 +249,12 @@ public sealed class AgentHost : IAsyncDisposable
     /// run_shell 的 AI 安全审核（替代人工审批）：模型判断命令是否属于排障所需。
     /// 审核失败按拒绝处理（fail-closed）；`AgentConfig.ShellReviewEnabled=false` 可关闭。
     /// </summary>
-    private async Task<(bool Allow, string Reason)> ReviewShellCommandAsync(string command, CancellationToken ct)
+    private async Task<(bool Allow, string Reason)> ReviewShellCommandAsync(string command, string purpose, CancellationToken ct)
     {
         if (!Config.Agent.ShellReviewEnabled) return (true, "");
-        var verdict = await new ShellCommandReviewer(Router).ReviewAsync(command, ct);
+        var verdict = await new ShellCommandReviewer(Router).ReviewAsync(command, purpose, ct);
         Log(verdict.Allow
-            ? $"[审核] 放行：{command}"
+            ? $"[审核] 放行：{command}（{purpose}）"
             : $"[审核] 拒绝：{command}（{verdict.Reason}）");
         return (verdict.Allow, verdict.Reason);
     }

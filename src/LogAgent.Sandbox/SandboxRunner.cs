@@ -26,13 +26,16 @@ public sealed class SandboxRunner(SandboxConfig config)
     public async Task<CommandResult> RunAsync(string workingDirectory, string command, CancellationToken ct = default)
     {
         var taskId = NextTaskId();
-        var whitelist = new CommandWhitelist(config);
-        var (allowed, reason) = whitelist.Check(command);
-        if (!allowed)
+        if (config.CommandCheckEnabled)
         {
-            var rejected = new CommandResult(-1, $"[拒绝] {reason}", TimeSpan.Zero, true);
-            Audit(new CommandAuditEntry(DateTimeOffset.Now, taskId, command, false, -1, false, TimeSpan.Zero, reason, 0));
-            return rejected;
+            var whitelist = new CommandWhitelist(config);
+            var (allowed, reason) = whitelist.Check(command);
+            if (!allowed)
+            {
+                var rejected = new CommandResult(-1, $"[拒绝] {reason}", TimeSpan.Zero, true);
+                Audit(new CommandAuditEntry(DateTimeOffset.Now, taskId, command, false, -1, false, TimeSpan.Zero, reason, 0));
+                return rejected;
+            }
         }
 
         var spec = PlatformShell.Current.BuildLaunch(command);

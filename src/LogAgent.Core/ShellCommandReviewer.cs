@@ -14,15 +14,18 @@ public sealed class ShellCommandReviewer(ModelRouter router)
 {
     public sealed record Verdict(bool Allow, string Reason);
 
-    public async Task<Verdict> ReviewAsync(string command, CancellationToken ct = default)
+    public async Task<Verdict> ReviewAsync(string command, string purpose, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(command)) return new Verdict(false, "命令为空");
 
+        var request = string.IsNullOrWhiteSpace(purpose)
+            ? $"命令：{command}"
+            : $"命令：{command}\n执行目的：{purpose}";
         try
         {
             var result = await router.CompleteAsync(
                 TaskType.Chat,
-                [ChatTurn.System(Prompts.ShellReview), ChatTurn.User(command)],
+                [ChatTurn.System(Prompts.ShellReview), ChatTurn.User(request)],
                 maxTokens: 120, temperature: 0, ct: ct);
 
             var text = result.Content.Trim();
