@@ -20,7 +20,8 @@ public sealed class GroupContextAgent(
     KnowledgeConfig? knowledgeConfig = null,
     ISkillToolHost? skills = null,
     SkillsConfig? skillsConfig = null,
-    ImageFetcher? imageFetcher = null)
+    ImageFetcher? imageFetcher = null,
+    MemoryStore? memory = null)
 {
     private const int HitContextBudget = 640;
 
@@ -60,6 +61,15 @@ public sealed class GroupContextAgent(
         {
             turns.Add(ChatTurn.System(Prompts.RecentTopicsIntro + "\n" +
                                       string.Join("\n---\n", context.RecentSummaries.Select((s, i) => $"[{i + 1}] {s}"))));
+        }
+
+        // 会话记忆（与知识库分开）：自动记录、未经审核，注入时明确标注不确定
+        if (memory is not null)
+        {
+            var remembered = memory.Search(message.ChatId, message.Text, 3);
+            if (remembered.Count > 0)
+                turns.Add(ChatTurn.System(Prompts.MemoryRefIntro + "\n" +
+                    string.Join("\n", remembered.Select((m, i) => $"[M{i + 1}] {m.Content}"))));
         }
 
         // 指令型技能（SKILL.md）：技能清单进系统提示，模型按需 read_skill 读取全文

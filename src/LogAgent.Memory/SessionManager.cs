@@ -19,7 +19,8 @@ public sealed record SessionContext(
 /// 切断规则：超时/容量/手动；切断时生成 L1 摘要（Summary 分流，便宜模型）；
 /// L0 原文实时落库（训练数据原料，永不丢弃）。
 /// </summary>
-public sealed class SessionManager(SessionStore store, ModelRouter router, AgentConfig config)
+public sealed class SessionManager(SessionStore store, ModelRouter router, AgentConfig config,
+    MemoryStore? memory = null)
 {
     /// <summary>底层存储（本机对话页回显历史等只读用途）。</summary>
     public SessionStore Store => store;
@@ -105,8 +106,44 @@ public sealed class SessionManager(SessionStore store, ModelRouter router, Agent
         }
         store.CloseSession(session.Id, DateTimeOffset.Now, reason, summary);
         if (summary is not null) store.InsertSummary(session.Id, 1, summary);
+        if (memory is not null && session.Window.Count > 0)
+            await ExtractMemoryAsync(session, ct);
         Log($"[{chatId}] 会话已切段（{reason}），消息 {session.MessageCount} 条，摘要{(summary is null ? "跳过" : "已生成")}");
         return session.Id;
+    }
+
+    /// <summary>
+    /// 从会话窗口提炼「值得长期记住的事实」，交给 memoryWrite 写入可检索存储（知识库 source=memory）。
+    /// 失败不影响切段；最多 3 条，过短/过长/「无」都丢弃。
+    /// </summary>
+    private async Task ExtractMemoryAsync(ActiveSession session, CancellationToken ct)
+    {
+        try
+        {
+            var transcript = string.Join("\n",
+                session.Window.TakeLast(40).Select(t => $"{t.Role}: {t.Content}"));
+            if (transcript.Length > 6000) transcript = transcript[^6000..];
+
+            var result = await router.CompleteAsync(
+                TaskType.Summary,
+                [ChatTurn.System(Prompts.MemoryFactExtractor), ChatTurn.User(transcript)],
+                maxTokens: 300, temperature: 0.1, ct: ct);
+
+            var written = 0;
+            foreach (var raw in result.Content.Split('\n'))
+            {
+                var fact = raw.Trim().TrimStart('-', '·', '*', ' ').Trim();
+                if (fact.Length is < 6 or > 200) continue;
+                if (fact is "无" or "无。") continue;
+                memory!.Add(session.ChatId, fact);
+                if (++written >= 3) break;
+            }
+            if (written > 0) Log($"[{session.ChatId}] 已写入 {written} 条会话记忆");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log($"[{session.ChatId}] 记忆提炼失败（不影响切段）：{ex.Message}");
+        }
     }
 
     private async Task<string> SummarizeAsync(ActiveSession session, CancellationToken ct)

@@ -26,6 +26,7 @@ public sealed class AgentHost : IAsyncDisposable
     private McpManager? _mcp;
     private MessageEnricher? _enricher;
     private FirefoxBrowser? _browser;
+    private MemoryStore? _memory;
     private bool _initializing;
     private readonly LocalChatBridge _localBridge = new();
 
@@ -62,6 +63,9 @@ public sealed class AgentHost : IAsyncDisposable
     public KnowledgeStore? Knowledge => _knowledge;
     public SkillRegistry? Skills => _skills;
     public McpManager? Mcp => _mcp;
+
+    /// <summary>会话记忆（与知识库分开：记忆不确定，知识库经审核）。</summary>
+    public MemoryStore? Memory => _memory;
 
     /// <summary>运行时就绪（装配成功）。</summary>
     public bool IsReady => _runtime is not null;
@@ -156,7 +160,10 @@ public sealed class AgentHost : IAsyncDisposable
 
         var db = new Database(Path.Combine(AppConfigStore.GetDataDirectory(), "logagent.db"));
         db.EnsureCreated();
-        _sessions = new SessionManager(new SessionStore(db), Router, Config.Agent);
+        var memory = new MemoryStore(db);
+        memory.EnsureCreated();
+        _memory = memory;
+        _sessions = new SessionManager(new SessionStore(db), Router, Config.Agent, memory);
         _sessions.SessionLog += (_, line) => Log($"[会话] {line}");
 
         // AI 审核开启时，命令白/黑名单不再作为闸门（审核通过即放行）；沙箱仍保留超时、输出上限与路径守卫
@@ -220,7 +227,7 @@ public sealed class AgentHost : IAsyncDisposable
             knowledgeSearch: SearchKnowledgeAsync,
             shellReviewer: ReviewShellCommandAsync);
 
-        var groupAgent = new GroupContextAgent(Router, _knowledge, Config.Knowledge, hub, Config.Skills);
+        var groupAgent = new GroupContextAgent(Router, _knowledge, Config.Knowledge, hub, Config.Skills, memory: memory);
         groupAgent.AgentLog += (_, line) => Log($"[技能] {line}");
 
         // 消息富化（logshare 链接 / QQ 文件附件 → 抓取正文并入消息）
