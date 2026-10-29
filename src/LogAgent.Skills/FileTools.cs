@@ -49,7 +49,8 @@ public sealed class FileTools(string filesDir, SandboxRunner? sandboxRunner = nu
             tools.Add(new ChatToolDefinition(RunShellTool,
                 $"在 files 目录执行{shell.DisplayName}命令做日志分析或查系统状态（工作目录即文件保存目录，用相对文件名即可）。" +
                 shell.RunShellHint +
-                "超时约 30 秒、输出超限自动截断。执行前会由安全审核判断是否放行，所以必须说明目的。参数：command；purpose。",
+                "超时约 30 秒、输出超限自动截断。执行前会由安全审核判断是否放行，所以必须说明目的。" +
+                "注意：沙箱以普通用户运行（无 root），sudo 与 apt/pip 安装不可用，别把轮次花在装软件上；缺能力就说明限制或换方案。参数：command；purpose。",
                 """{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令（工作目录为 files 目录）"},"purpose":{"type":"string","description":"一句话说明为什么执行它、想看什么/解决什么，供安全审核判断"}},"required":["command","purpose"]}"""));
         }
         return tools;

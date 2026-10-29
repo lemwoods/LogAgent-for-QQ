@@ -43,7 +43,7 @@ public sealed class WebTools(bool allowPrivate = false, IWebBrowser? browser = n
         if (browser is not null)
         {
             tools.Add(new ChatToolDefinition(WebScreenshotTool,
-                "用 headless Firefox 打开网页并执行 JavaScript，返回渲染后的可见正文，同时把界面截图保存到本机。适合动态渲染页面（SPA、需要脚本才显示内容）或 web_fetch 抓不到正文时使用；需要确认页面实际显示效果时也用它。仅支持 http/https 公网地址。",
+                "用 headless Firefox 打开网页并执行 JavaScript，返回渲染后的可见正文，同时把界面截图保存到本机。适合动态渲染页面（SPA、需要脚本才显示内容）或 web_fetch 抓不到正文时使用；需要确认页面实际显示效果时也用它。仅支持 http/https 公网地址。若返回「未找到 Firefox」，说明本机没有安装，改用 web_fetch 或直接告知用户当前无法截图。",
                 WebScreenshotParameters));
         }
 

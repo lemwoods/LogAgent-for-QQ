@@ -25,8 +25,9 @@ public sealed class GroupContextAgent(
 {
     private const int HitContextBudget = 640;
 
-    /// <summary>工具循环上限（防失控：超过后补一次无工具收尾）。文件分析常见「搜索→精读→再搜索」，给足轮次。</summary>
-    private const int MaxToolRounds = 6;
+    /// <summary>工具循环上限（防失控：超过后补一次无工具收尾）。文件分析常见「搜索→精读→再搜索」，给足轮次。
+    /// 8 轮：够「查状态页 → 抓页面 → 抓脚本 → 提取接口 → 再请求」这类多步取证，又不至于无界。</summary>
+    private const int MaxToolRounds = 8;
 
     private readonly ImageFetcher _imageFetcher = imageFetcher ?? new ImageFetcher();
 
