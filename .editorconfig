@@ -1,0 +1,30 @@
+root = true
+
+# 代码风格基线（AGENTS.md §4 的机器可读版本）。
+# 目前只做「建议」级别：先统一约定，等现有告警清零后再提升为 warning。
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+
+[*.{cs,csx}]
+# file-scoped namespace（仓库统一用法）
+csharp_style_namespace_declarations = file_scoped:suggestion
+# 集合表达式优先于显式 new
+dotnet_style_prefer_collection_expression = true:suggestion
+# 明确的类型时使用 var
+csharp_style_var_when_type_is_apparent = true:suggestion
+# using 排序
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+[*.{xml,csproj,props,targets,xaml,axaml}]
+indent_size = 2
+
+[*.{json,jsonc}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false

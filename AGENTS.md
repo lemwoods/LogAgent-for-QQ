@@ -10,7 +10,7 @@
 - **两种宿主**：`LogAgent.App`（WPF，Windows 全功能）、`LogAgent.Headless`（无头 CLI/服务，Linux/Windows）
 - **双形态**：桌面壳 + 无头服务，共用 `LogAgent.Core.AgentHost` 运行时
 - **QQ 接入**：OpenClaw 风格频道抽象——官方 Bot 优先，NapCat（OneBot11）可并行；两者都能独立启停
-- **文档**：`docs/` 下 7 篇（规划 / 快速上手 / 分发 / Linux 部署 / Android APK / 第三方许可证）
+- **文档**：`docs/` 下 9 篇（规划 / 快速上手 / 分发 / Linux 部署 / Android APK / 第三方许可证 / 实现审查 / P0 技术审查）
 - **许可证**：`linux` 分支为 **GPLv2**（`main` 历史提交仍按其当时的 MIT）。引入任何第三方二进制前先看 `docs/07-第三方组件与许可证.md`
 
 ## 2. 构建与验证
@@ -69,6 +69,16 @@ LogAgent.App (WPF)  /  LogAgent.Desktop (Avalonia)  /  LogAgent.Headless
 `AgentHost` 是 UI 无关的组合根（会话/沙箱/知识库/技能/MCP/Agent 装配）。
 `AppHost`（WPF）只是薄桥接层，公开成员不能随意删改——页面直接绑定这些成员。
 
+### 分析能力归属：AI 判断，代码供料
+
+日志分析与根因判断**由模型完成**，不要用硬编码规则、关键词表或固定结论替代模型推理：
+
+- 代码的职责是准备材料：完整落盘、解析统计、错误聚类、行号证据、知识库检索、按需工具；
+- 提示词写**目标、证据标准与交付格式**，不写「遇到 X 就回答 Y」的判定表；
+- 知识库是**可参考的假设**，不是标准答案：命中要标编号，不匹配不得强行关联；
+- 测试只校验「证据是否到位、有没有编造、步骤是否可执行」，不锁定具体措辞或唯一根因；
+- 加新规则前先判断：这是模型该判断的，还是证据/工具缺失？只有后者才改代码。
+
 ## 4. 代码风格
 
 - **注释与文档用中文**；标识符、日志前缀用英文
@@ -107,7 +117,7 @@ LogAgent.App (WPF)  /  LogAgent.Desktop (Avalonia)  /  LogAgent.Headless
 - **不擅自升级依赖**：`PackageReference` 版本变更需用户确认（尤其 Avalonia 全家桶必须版本一致——DataGrid 最高只到 11.3.13）
 - **不擅自改 CI**：工作流的触发条件、job 结构变更要说明理由
 - **破坏性操作先确认**：删文件、改数据库 schema、强推分支
-- **沙箱默认值变更要谨慎**：Windows 白/黑名单必须与 v0.7.0 逐条一致（有测试守护）
+- **沙箱默认值变更要谨慎**：Windows 白/黑名单必须与 v0.7.0 逐条一致（`M3Tests` 有抽样守护，改动时需自查全量）
 
 ## 8. 交付沟通
 
@@ -137,5 +147,6 @@ LogAgent.App (WPF)  /  LogAgent.Desktop (Avalonia)  /  LogAgent.Headless
 | 改沙箱/白名单 | `src/LogAgent.Sandbox/` + `LogAgent.Shared/Platform/` |
 | 加内置工具 | `src/LogAgent.Skills/FileTools.cs` + `ToolHostHub.cs` |
 | 改配置项 | `src/LogAgent.Shared/Configuration/` |
+| 改评估样例 | `src/LogAgent.Core/Eval/LogEvalCases.cs`（`LogAgent.Headless eval` 与测试共用） |
 | 加桌面页面 | `src/LogAgent.Desktop/Views/` + `ViewModels/`（记得在 `App.axaml` 注册 DataTemplate） |
 | 改 Android 打包 | `tools/android/*.sh` + `src/LogAgent.Android/`（方案见 `docs/06-Android-APK方案-proroot容器.md`） |

@@ -1,3 +1,4 @@
+using System.Text;
 using LogAgent.Knowledge;
 using LogAgent.Mcp;
 using LogAgent.Memory;
@@ -24,6 +25,7 @@ public sealed class AgentHost : IAsyncDisposable
     private SkillRegistry? _skills;
     private McpManager? _mcp;
     private MessageEnricher? _enricher;
+    private FirefoxBrowser? _browser;
     private bool _initializing;
     private readonly LocalChatBridge _localBridge = new();
 
@@ -136,6 +138,8 @@ public sealed class AgentHost : IAsyncDisposable
             try { await _mcp.DisposeAsync(); }
             catch (Exception) { /* 退出路径尽力而为 */ }
         }
+        _browser?.Dispose();
+        _browser = null;
         _mcp = null;
         _runtime = null;
         _sessions = null;
@@ -189,7 +193,30 @@ public sealed class AgentHost : IAsyncDisposable
         var fileTools = new FileTools(filesDir, Config.Sandbox.Enabled ? _sandbox.Runner : null);
         fileTools.ToolLog += (_, line) => Log($"[工具] {line}");
 
-        var hub = new ToolHostHub(_skills, _mcp, Config, fileTools, new WebTools());
+        // 网页截图：headless Firefox 渲染 JS 页面（web_screenshot）。
+        // 未安装 Firefox 时仍暴露工具并给出安装提示，不影响 web_fetch。
+        var screenshotDir = string.IsNullOrWhiteSpace(Config.Browser.ScreenshotDirectory)
+            ? AppConfigStore.GetScreenshotsDirectory()
+            : Path.GetFullPath(Config.Browser.ScreenshotDirectory.Trim());
+        FirefoxBrowser? browser = null;
+        if (Config.Browser.Enabled)
+        {
+            Directory.CreateDirectory(screenshotDir);
+            var cleanedShots = FileTools.CleanupOldFiles(screenshotDir, TimeSpan.FromDays(7));
+            if (cleanedShots > 0) Log($"[浏览器] 已清理 {cleanedShots} 张过期截图");
+            browser = new FirefoxBrowser(Config.Browser.FirefoxPath,
+                timeoutSeconds: Config.Browser.TimeoutSeconds,
+                maxConcurrent: Config.Browser.MaxConcurrent);
+            _browser = browser;
+            Log(browser.ExecutablePath is { } firefox
+                ? $"[浏览器] Firefox: {firefox}"
+                : "[浏览器] 未找到 Firefox——web_screenshot 将提示安装（Termux: pkg install x11-repo firefox）");
+        }
+
+        var hub = new ToolHostHub(_skills, _mcp, Config, fileTools,
+            new WebTools(browser: browser, screenshotDir: screenshotDir),
+            knowledgeSearch: SearchKnowledgeAsync,
+            shellReviewer: ReviewShellCommandAsync);
 
         var groupAgent = new GroupContextAgent(Router, _knowledge, Config.Knowledge, hub, Config.Skills);
         groupAgent.AgentLog += (_, line) => Log($"[技能] {line}");
@@ -202,7 +229,6 @@ public sealed class AgentHost : IAsyncDisposable
         logAgent.AnalysisLog += (_, line) => Log($"[分析] {line}");
 
         _runtime = new AgentRuntime(
-            Router,
             groupAgent,
             logAgent,
             _learning,
@@ -216,6 +242,53 @@ public sealed class AgentHost : IAsyncDisposable
     }
 
     private void Log(string line) => Logged?.Invoke(line);
+
+    /// <summary>
+    /// run_shell 的 AI 安全审核（替代人工审批）：模型判断命令是否属于排障所需。
+    /// 审核失败按拒绝处理（fail-closed）；`AgentConfig.ShellReviewEnabled=false` 可关闭。
+    /// </summary>
+    private async Task<(bool Allow, string Reason)> ReviewShellCommandAsync(string command, CancellationToken ct)
+    {
+        if (!Config.Agent.ShellReviewEnabled) return (true, "");
+        var verdict = await new ShellCommandReviewer(Router).ReviewAsync(command, ct);
+        Log(verdict.Allow
+            ? $"[审核] 放行：{command}"
+            : $"[审核] 拒绝：{command}（{verdict.Reason}）");
+        return (verdict.Allow, verdict.Reason);
+    }
+
+    /// <summary>
+    /// 模型主动检索知识库（search_knowledge 工具）。返回带编号的案例块；无命中时明确说「没有」，
+    /// 让模型换关键词或直接依据日志作答，而不是拿空结果硬编。
+    /// </summary>
+    private async Task<string> SearchKnowledgeAsync(string query, int topK, CancellationToken ct)
+    {
+        if (_knowledge is null || !Config.Knowledge.Enabled)
+            return "错误：知识库未启用";
+        try
+        {
+            var hits = await _knowledge.SearchAsync(query, topK, ct);
+            if (hits.Count == 0)
+                return "知识库没有匹配条目。可以换更具体的报错原文/类名再试，或直接依据当前日志分析。";
+
+            var probes = KnowledgeText.QueryTokens(query);
+            var sb = new StringBuilder();
+            for (var i = 0; i < hits.Count; i++)
+            {
+                var hit = hits[i];
+                var title = string.IsNullOrWhiteSpace(hit.Item.Title) ? "(无标题)" : hit.Item.Title;
+                sb.AppendLine($"[K{i + 1}] {title}（来源：{hit.Item.DescribeSource()}）");
+                sb.AppendLine(KnowledgeText.ClipAround(hit.Item.Content, probes, 800));
+                sb.AppendLine();
+            }
+            sb.Append("以上是历史案例/资料，可能只是相似：先核对错误模板或堆栈是否一致，不一致请在结论里说明差异。");
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"知识库检索失败：{ex.Message}";
+        }
+    }
 
     /// <summary>本地对话桥：回复不经网络，直接投递给订阅者。合并转发 = 整段一次投递（页面可滚动）。</summary>
     private sealed class LocalChatBridge : IBotConnectionFactory

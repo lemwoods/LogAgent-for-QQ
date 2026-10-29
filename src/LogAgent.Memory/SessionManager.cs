@@ -34,7 +34,11 @@ public sealed class SessionManager(SessionStore store, ModelRouter router, Agent
         public int MessageCount { get; set; }
     }
 
-    private readonly ConcurrentDictionary<string, ActiveSession> _active = new();
+    /// <summary>
+    /// 活跃会话表。值用 <see cref="Lazy{T}"/> 包一层，保证 <c>CreateSession</c> 只执行一次——
+    /// 两条并发首消息若各自 miss 后各建一行，失败那行永远不会 CloseSession（孤儿会话，end_time 恒为 NULL）。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, Lazy<ActiveSession>> _active = new();
 
     public event EventHandler<string>? SessionLog;
 
@@ -45,7 +49,7 @@ public sealed class SessionManager(SessionStore store, ModelRouter router, Agent
     public async Task<SessionContext> OnIncomingAsync(BotMessage message, CancellationToken ct = default)
     {
         var idle = TimeSpan.FromMinutes(Math.Max(1, config.SessionIdleTimeoutMinutes));
-        if (_active.TryGetValue(message.ChatId, out var stale) &&
+        if (TryGetActive(message.ChatId) is { } stale &&
             DateTimeOffset.Now - stale.LastActiveAt > idle)
         {
             Log($"[{message.ChatId}] 静默超时，切段");
@@ -76,7 +80,7 @@ public sealed class SessionManager(SessionStore store, ModelRouter router, Agent
     /// <summary>Agent 回复进入窗口并记录 Turn（quality_tag 初始 none，后续反馈更新）。</summary>
     public void OnAgentReply(BotMessage message, string reply, string? modelUsed)
     {
-        if (!_active.TryGetValue(message.ChatId, out var session)) return;
+        if (TryGetActive(message.ChatId) is not { } session) return;
         session.Window.Add(ChatTurn.Assistant(reply));
         session.TokenEstimate += EstimateTokens(reply);
         store.RecordTurn(session.Id, message.Text, reply, modelUsed: modelUsed);
@@ -85,7 +89,8 @@ public sealed class SessionManager(SessionStore store, ModelRouter router, Agent
     /// <summary>手动/规则切段：生成 L1 摘要 → 关闭会话。摘要失败不阻断切段。</summary>
     public async Task<string?> CutAsync(string chatId, string reason, CancellationToken ct = default)
     {
-        if (!_active.TryRemove(chatId, out var session)) return null;
+        if (!_active.TryRemove(chatId, out var lazy)) return null;
+        var session = lazy.Value;
         string? summary = null;
         if (config.SummaryOnCut && session.Window.Count > 0)
         {
@@ -121,13 +126,26 @@ public sealed class SessionManager(SessionStore store, ModelRouter router, Agent
         return new SessionContext(session.Id, session.ChatId, summaries, window);
     }
 
+    /// <summary>取活跃会话（不存在或创建失败则返回 null）。</summary>
+    private ActiveSession? TryGetActive(string chatId) =>
+        _active.TryGetValue(chatId, out var lazy) ? lazy.Value : null;
+
     private ActiveSession GetOrCreate(string chatId, ChatType chatType)
     {
-        if (_active.TryGetValue(chatId, out var existing)) return existing;
-        var id = store.CreateSession(chatId, chatType);
-        var created = new ActiveSession { Id = id, ChatId = chatId };
-        _active[chatId] = created;
-        return created;
+        try
+        {
+            return _active.GetOrAdd(chatId, k => new Lazy<ActiveSession>(() =>
+            {
+                var id = store.CreateSession(k, chatType);
+                return new ActiveSession { Id = id, ChatId = k };
+            })).Value;
+        }
+        catch
+        {
+            // Lazy 会缓存异常：建会话失败时把条目摘掉，避免该群后续所有消息永久失败
+            _active.TryRemove(chatId, out _);
+            throw;
+        }
     }
 
     /// <summary>粗略 token 估算：中文≈字数，英文≈字符/4，取中庸。</summary>

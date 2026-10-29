@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
 using LogAgent.Memory;
@@ -11,24 +12,82 @@ namespace LogAgent.Core;
 /// 消息泵（M4）：触发判定 → 消息富化（链接/附件抓取）→ 会话管理 → 命令路由（新话题/记住/学习网页/日志分析/对话）→ RAG 增强回复。
 /// </summary>
 public sealed class AgentRuntime(
-    ModelRouter router,
     GroupContextAgent groupAgent,
     LogAnalysisAgent logAgent,
     LearningAgent? learningAgent,
     SessionManager sessions,
     AgentConfig agentConfig,
-    MessageEnricher? enricher = null)
+    MessageEnricher? enricher = null,
+    TimeSpan? enrichLinkBudget = null)
 {
     private static readonly string[] NewTopicCommands = ["新话题", "换个话题", "/new", "重置上下文"];
     private const int SegmentLength = 1600;
 
+    /// <summary>
+    /// 单条消息里「链接抓取」的总预算。富化在会话门内执行，外链卡住会连带阻塞该群后续消息，
+    /// 因此给链接单独设上限（附件是用户主动上传，另按下载预算走）。
+    /// </summary>
+    private static readonly TimeSpan DefaultEnrichLinkBudget = TimeSpan.FromSeconds(90);
+
     private readonly MessageEnricher _enricher = enricher ?? new MessageEnricher();
+
+    /// <summary>
+    /// 每个会话一把门：同一 chat 的消息串行处理。
+    /// 三个宿主（WPF / Avalonia / Headless）的消息事件都是 async void，收到消息就并发进入本类，
+    /// 不加门时同一群的两条消息会并发改写 SessionManager 的窗口、切段与摘要状态。
+    /// 门按 chatId 常驻（量级 = 活跃聊天数，不做回收，避免引用计数带来的复杂度）。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _chatGates = new(StringComparer.Ordinal);
 
     public event EventHandler<string>? RuntimeLog;
 
     public SessionManager Sessions => sessions;
 
-    public async Task OnMessageAsync(IMessageSender factory, BotMessage message, CancellationToken ct = default)
+    /// <summary>
+    /// 消息入口：先取该 chat 的门，再交给 <see cref="HandleCoreAsync"/>。
+    /// 同一群串行、不同群并行；等待期间被取消则直接丢弃该条消息（不回复）。
+    /// </summary>
+    public async Task OnMessageAsync(IMessageSender sender, BotMessage message, CancellationToken ct = default)
+    {
+        var gate = _chatGates.GetOrAdd(message.ChatId, _ => new SemaphoreSlim(1, 1));
+        try
+        {
+            await gate.WaitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, agentConfig.MessageTimeoutSeconds)));
+        if (agentConfig.MessageMaxTokens > 0) TokenBudget.Begin(agentConfig.MessageMaxTokens);
+        try
+        {
+            await HandleCoreAsync(sender, message, deadline.Token);
+        }
+        catch (TokenBudgetExceededException ex)
+        {
+            RuntimeLog?.Invoke(this, $"[预算] 已用 {ex.Used}/{ex.Limit} tokens，中止");
+            await sender.SendTextAsync(message.ChatId, message.ChatType,
+                $"这条消息的模型用量超过预算（{ex.Used}/{ex.Limit} tokens），已中止。可以把日志拆小一点，或调大配置里的 MessageMaxTokens。",
+                message.MessageId, ct);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            RuntimeLog?.Invoke(this, $"[超时] 处理超过 {agentConfig.MessageTimeoutSeconds}s，已中止");
+            await sender.SendTextAsync(message.ChatId, message.ChatType,
+                $"这条处理超过 {agentConfig.MessageTimeoutSeconds} 秒，已中止。可以把日志拆小一点，或稍后再发一次。",
+                message.MessageId, ct);
+        }
+        finally
+        {
+            TokenBudget.End();
+            gate.Release();
+        }
+    }
+
+    private async Task HandleCoreAsync(IMessageSender sender, BotMessage message, CancellationToken ct = default)
     {
         RuntimeLog?.Invoke(this, $"[{message.ChatType}:{message.ChatId}] {message.SenderName}: {message.Text}");
 
@@ -36,7 +95,7 @@ public sealed class AgentRuntime(
         if (IsNewTopicCommand(message))
         {
             await sessions.CutAsync(message.ChatId, "manual", ct);
-            await factory.SendTextAsync(message.ChatId, message.ChatType, "好的，已开启新话题 ✅", message.MessageId, ct);
+            await sender.SendTextAsync(message.ChatId, message.ChatType, "好的，已开启新话题 ✅", message.MessageId, ct);
             return;
         }
 
@@ -54,11 +113,11 @@ public sealed class AgentRuntime(
                     ? await learningAgent.LearnFromUserAsync(learnArg, message.SenderName, ct)
                     : await learningAgent.LearnFromUrlAsync(learnArg, ct);
                 sessions.OnAgentReply(message, ack, modelUsed: "learning");
-                await factory.SendTextAsync(message.ChatId, message.ChatType, ack, message.MessageId, ct);
+                await sender.SendTextAsync(message.ChatId, message.ChatType, ack, message.MessageId, ct);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not TokenBudgetExceededException)
             {
-                await factory.SendTextAsync(message.ChatId, message.ChatType, $"学习失败：{ex.Message}", message.MessageId, ct);
+                await sender.SendTextAsync(message.ChatId, message.ChatType, $"学习失败：{ex.Message}", message.MessageId, ct);
             }
             return;
         }
@@ -84,12 +143,20 @@ public sealed class AgentRuntime(
             }
             sessions.OnAgentReply(message, reply, modelUsed: null);
             RuntimeLog?.Invoke(this, $"回复: {reply[..Math.Min(80, reply.Length)]}");
-            await SendReplyAsync(factory, message, reply, ct);
+            await SendReplyAsync(sender, message, reply, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // 处理时限到 / 停机取消：交给上层，不吞成“打嗝”
+        }
+        catch (TokenBudgetExceededException)
+        {
+            throw; // 预算击穿：交给上层给出明确提示
         }
         catch (Exception ex)
         {
             RuntimeLog?.Invoke(this, $"回复失败：{ex.GetType().Name}: {ex.Message}");
-            await factory.SendTextAsync(message.ChatId, message.ChatType,
+            await sender.SendTextAsync(message.ChatId, message.ChatType,
                 $"呜，小炎内部打了个嗝（已记录日志，稍后再试）：{ex.Message}", message.MessageId, ct);
         }
     }
@@ -102,7 +169,7 @@ public sealed class AgentRuntime(
         if (!hasLinks && !hasAttachments) return message;
         try
         {
-            var enriched = await _enricher.EnrichTextAsync(message, ct);
+            var enriched = await _enricher.EnrichTextAsync(message, ct, enrichLinkBudget ?? DefaultEnrichLinkBudget);
             if (enriched == message.Text) return message;
             RuntimeLog?.Invoke(this, $"[富化] 链接/附件已并入消息（+{enriched.Length - message.Text.Length} 字符）");
             return new BotMessage
@@ -170,20 +237,20 @@ public sealed class AgentRuntime(
     /// ② 无分节但超长 → 按行切块后交给同一合并入口；
     /// ③ 通道既不支持转发也不支持合并（本机对话/超长）→ 短文直发、长文回退分段。
     /// </summary>
-    private static async Task SendReplyAsync(IMessageSender factory, BotMessage message, string text, CancellationToken ct)
+    private static async Task SendReplyAsync(IMessageSender sender, BotMessage message, string text, CancellationToken ct)
     {
         var sections = SplitSections(text);
         if (sections.Count >= 2 &&
-            await factory.TrySendForwardAsync(message.ChatId, message.ChatType, sections, message.MessageId, ct))
+            await sender.TrySendForwardAsync(message.ChatId, message.ChatType, sections, message.MessageId, ct))
             return;
 
         if (text.Length > SegmentLength &&
-            await factory.TrySendForwardAsync(message.ChatId, message.ChatType, ChunkForForward(text), message.MessageId, ct))
+            await sender.TrySendForwardAsync(message.ChatId, message.ChatType, ChunkForForward(text), message.MessageId, ct))
             return;
 
         if (text.Length <= SegmentLength)
         {
-            await factory.SendTextAsync(message.ChatId, message.ChatType, text, message.MessageId, ct);
+            await sender.SendTextAsync(message.ChatId, message.ChatType, text, message.MessageId, ct);
             return;
         }
 
@@ -191,7 +258,7 @@ public sealed class AgentRuntime(
         for (var i = 0; i < segments.Count; i++)
         {
             var body = segments.Count > 1 ? $"({i + 1}/{segments.Count}) {segments[i]}" : segments[i];
-            await factory.SendTextAsync(message.ChatId, message.ChatType, body, message.MessageId, ct);
+            await sender.SendTextAsync(message.ChatId, message.ChatType, body, message.MessageId, ct);
             if (i < segments.Count - 1) await Task.Delay(350, ct);
         }
     }

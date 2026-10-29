@@ -112,6 +112,11 @@ public sealed class LogAnalysisAgent(
             analysisText = final.Content;
         }
         analysisText = ToolMarkup.Strip(analysisText).Trim();
+        if (analysisText.Length == 0)
+        {
+            Log("模型未返回正文，跳过 Reflection");
+            return EmptyConclusionReport(fileName, sizeText, lines);
+        }
 
         // Reflection 自检（同文本模式）
         var reflection = await router.CompleteAsync(
@@ -223,12 +228,20 @@ public sealed class LogAnalysisAgent(
         // ---- Step 2.5: 知识库相似案例（对照判断命中）----
         var cases = await SearchCasesAsync(stats, ct);
 
-        // ---- Step 3: 根因推断 ----
-        var analysis = await router.CompleteAsync(
-            TaskType.LogAnalysis,
-            [ChatTurn.System(Prompts.LogAnalysisRole(markdown)), ChatTurn.System(Prompts.CurrentTimeLine()), ChatTurn.User(material + cases)],
-            maxTokens: 2000, temperature: 0.3, ct: ct);
+        // ---- Step 3: 根因推断（允许模型自己检索知识库）----
+        var turns = new List<ChatTurn>
+        {
+            ChatTurn.System(Prompts.LogAnalysisRole(markdown)),
+            ChatTurn.System(Prompts.CurrentTimeLine()),
+            ChatTurn.User(material + cases),
+        };
+        var analysis = await CompleteWithKnowledgeSearchAsync(turns, ct);
         Log($"根因推断完成（{analysis.PromptTokens}+{analysis.CompletionTokens} tokens）");
+        if (string.IsNullOrWhiteSpace(analysis.Content))
+        {
+            Log("根因推断返回空内容，跳过 Reflection");
+            return EmptyConclusionReport(null, null, stats.TotalLines);
+        }
 
         // ---- Step 4: Reflection 自检 ----
         var reflection = await router.CompleteAsync(
@@ -278,7 +291,9 @@ public sealed class LogAnalysisAgent(
                 return $"[K{i + 1}] {title}{body}（来源：{h.Item.DescribeSource()}）";
             }));
             Log($"知识库相似案例：{cases.Count} 条（{string.Join("、", cases.Select(c => "#" + c.Item.Id))}）");
-            return "\n\n知识库相似案例（对照判断是否命中，命中请引用编号）：\n" + block;
+            return "\n\n知识库相似案例（检索依据：" + Shorten(query.Replace('\n', ' '), 120) + "）\n" +
+                   "以下是历史案例，可能只是相似而非同一问题：先核对错误模板/堆栈是否一致，一致再引用编号，不一致就说明差异，不要硬套。\n" +
+                   block;
         }
         catch (Exception ex)
         {
@@ -300,7 +315,7 @@ public sealed class LogAnalysisAgent(
         var parts = new List<string>();
         parts.Add($"级别统计：{DescribeLevels(stats)}");
         foreach (var cluster in stats.TopErrors.Take(6))
-            parts.Add($"错误簇（×{cluster.Count}）：{cluster.Template}\n  样本：{string.Join(" | ", cluster.Samples)}");
+            parts.Add($"错误簇（×{cluster.Count}，首行 L{cluster.FirstLineNo}）：{cluster.Template}\n  样本：{string.Join(" | ", cluster.Samples)}");
         foreach (var (stack, i) in stats.StackTraces.Select((s, i) => (s, i)))
             parts.Add($"堆栈#{i + 1}：\n{stack}");
         var material = string.Join("\n\n", parts);
@@ -323,4 +338,53 @@ public sealed class LogAnalysisAgent(
     private static string Shorten(string s, int n) => s.Length <= n ? s : s[..n] + "…";
 
     private void Log(string line) => AnalysisLog?.Invoke(this, line);
+
+    /// <summary>
+    /// 文本模式也允许模型自己查知识库：只暴露 search_knowledge 一个工具，最多 2 轮。
+    /// 没有该工具（技能未启用 / 未接知识库）时退化为普通单次补全。
+    /// 动机：没有嵌入模型时自动检索只能靠关键词，命中质量有限——把检索词交给模型自己决定更准。
+    /// </summary>
+    private async Task<ChatResult> CompleteWithKnowledgeSearchAsync(List<ChatTurn> turns, CancellationToken ct)
+    {
+        if (skills is null || skillsConfig is not { Enabled: true })
+            return await router.CompleteAsync(TaskType.LogAnalysis, turns, maxTokens: 2000, temperature: 0.3, ct: ct);
+
+        var tools = skills.BuildToolDefinitions(skillsConfig)
+            .Where(t => t.Name == ToolHostHub.SearchKnowledgeTool)
+            .ToList();
+        if (tools.Count == 0)
+            return await router.CompleteAsync(TaskType.LogAnalysis, turns, maxTokens: 2000, temperature: 0.3, ct: ct);
+
+        for (var round = 0; round < 2; round++)
+        {
+            var result = await router.CompleteAsync(TaskType.LogAnalysis, turns, maxTokens: 2000, temperature: 0.3, ct: ct, tools: tools);
+            if (result.ToolCalls is not { Count: > 0 } calls) return result;
+
+            turns.Add(ChatTurn.AssistantWithTools(result.Content, calls));
+            foreach (var call in calls)
+            {
+                Log($"调用工具：{call.Name}（{Shorten(call.Arguments, 100)}）");
+                var output = await skills.ExecuteToolAsync(call.Name, call.Arguments, skillsConfig, ct);
+                turns.Add(ChatTurn.Tool(call.Id, output));
+                Log($"{call.Name} 返回 {output.Length} 字符");
+            }
+        }
+
+        // 轮次用尽：不再给工具，直接收尾
+        return await router.CompleteAsync(TaskType.LogAnalysis, turns, maxTokens: 2000, temperature: 0.3, ct: ct);
+    }
+
+    /// <summary>
+    /// 模型返回空正文时的兜底报告。此前这种响应会被当成正常结论（报告只剩统计头 + 空的根因段），
+    /// 用户看不出是模型没答；这里明确告知原因与处理方式。
+    /// </summary>
+    private static string EmptyConclusionReport(string? fileName, string? sizeText, long lines) =>
+        $"""
+        📋 日志分析报告{(fileName is null ? "" : $"（文件：{fileName}）")}
+
+        · {(fileName is null ? $"总行数 {lines}" : $"文件大小 {sizeText}，约 {lines} 行")}
+
+        【未能生成结论】模型没有返回正文——通常是把输出预算花在了推理过程上（推理模型需要调大 provider 的 MaxTokens），或模型拒绝了这次请求。
+        请检查模型配置后重试；原日志已完整保留，可直接再发一次。
+        """;
 }

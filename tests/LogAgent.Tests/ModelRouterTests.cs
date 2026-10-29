@@ -50,6 +50,8 @@ public class ModelRouterTests
             Providers = [p1, p2, disabled],
             Rules = [new RouterRule { TaskType = TaskType.Chat, ProviderChain = ["p1", "p2"] }],
             DefaultProviderId = "p2",
+            // 本组用例按「不重试」语义断言调用次数与计量事件；重试行为见 ModelRouterRetryTests
+            ProviderMaxAttempts = 1,
         };
         var clients = new Dictionary<string, FakeClient>
         {

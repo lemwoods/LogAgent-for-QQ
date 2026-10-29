@@ -57,25 +57,43 @@ public sealed class MessageEnricher
         @"https?://(?:www\.)?(?:logshare\.cn(?:/v1/(?:raw|log|insights|ai))?|mclo\.gs(?:/1/(?:raw|insights))?|api\.mclo\.gs/1/(?:raw|insights))/(?<id>[A-Za-z0-9]{4,16})",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    /// <summary>富化消息文本：无链接/附件时原样返回。</summary>
-    public async Task<string> EnrichTextAsync(BotMessage message, CancellationToken ct = default)
+    /// <summary>
+    /// 富化消息文本：无链接/附件时原样返回。
+    /// <paramref name="linkBudget"/> 只约束「链接抓取」这一段——外链卡住不能拖住整个群；
+    /// 附件是用户主动上传，仍按各自的下载预算走。
+    /// </summary>
+    public async Task<string> EnrichTextAsync(BotMessage message, CancellationToken ct = default, TimeSpan? linkBudget = null)
     {
         var blocks = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var m in SharedLogLink.Matches(message.Text).Cast<Match>())
+
+        using var linkCts = linkBudget.HasValue ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
+        if (linkCts is not null && linkBudget.HasValue) linkCts.CancelAfter(linkBudget.Value);
+        var linkCt = linkCts?.Token ?? ct;
+
+        try
         {
-            var key = m.Value.Contains("logshare", StringComparison.OrdinalIgnoreCase) ? "logshare" : "mclogs";
-            if (!seen.Add($"{key}:{m.Groups["id"].Value}")) continue;
-            blocks.Add(await FetchSharedLogAsync(key, m.Groups["id"].Value, ct));
+            foreach (var m in SharedLogLink.Matches(message.Text).Cast<Match>())
+            {
+                var key = m.Value.Contains("logshare", StringComparison.OrdinalIgnoreCase) ? "logshare" : "mclogs";
+                if (!seen.Add($"{key}:{m.Groups["id"].Value}")) continue;
+                blocks.Add(await FetchSharedLogAsync(key, m.Groups["id"].Value, linkCt));
+            }
+            // 一般网页链接（排除已处理的共享日志平台）：自动抓取正文阅读，每条消息最多 2 条
+            foreach (var url in GeneralWebUrl.Matches(message.Text)
+                         .Select(m => m.Value.TrimEnd('.', '，', '。', '）', ')', '"', '\''))
+                         .Where(u => !u.Contains("logshare.cn", StringComparison.OrdinalIgnoreCase)
+                                  && !u.Contains("mclo.gs", StringComparison.OrdinalIgnoreCase))
+                         .Where(u => seen.Add(u))
+                         .Take(2))
+                blocks.Add(await FetchWebPageAsync(url, linkCt));
         }
-        // 一般网页链接（排除已处理的共享日志平台）：自动抓取正文阅读，每条消息最多 2 条
-        foreach (var url in GeneralWebUrl.Matches(message.Text)
-                     .Select(m => m.Value.TrimEnd('.', '，', '。', '）', ')', '"', '\''))
-                     .Where(u => !u.Contains("logshare.cn", StringComparison.OrdinalIgnoreCase)
-                              && !u.Contains("mclo.gs", StringComparison.OrdinalIgnoreCase))
-                     .Where(u => seen.Add(u))
-                     .Take(2))
-            blocks.Add(await FetchWebPageAsync(url, ct));
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            blocks.Add($"【链接抓取超时（{linkBudget?.TotalSeconds ?? 0:F0}s），已跳过；请直接粘贴日志或上传文件】");
+            Log("链接抓取超时，跳过");
+        }
+
         if (message.Attachments is { Count: > 0 })
         {
             foreach (var attachment in message.Attachments)
@@ -102,7 +120,7 @@ public sealed class MessageEnricher
             sb.Append(page.Text);
             return sb.ToString();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log($"[网页] 抓取 {url} 失败：{ex.Message}");
             return $"【网页抓取失败：{url}——{ex.Message}】（可用 web_fetch 工具重试，或请用户直接粘贴正文）";
@@ -162,7 +180,7 @@ public sealed class MessageEnricher
             Log($"[{tag}] 抓取 {id} 成功（{raw.Length} 字符，全文已保存）");
             return block.ToString();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log($"[{tag}] 抓取 {id} 失败：{ex.Message}");
             return $"【{label} 链接（id={id}）抓取失败：{ex.Message}】\n可请用户直接把日志文本粘贴出来，或改用 logshare.cn 分享后再发链接。";

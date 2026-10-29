@@ -1,0 +1,23 @@
+<Project>
+
+  <!--
+    全仓统一构建属性（docs/08 P1「规范可执行化」的第一步）。
+    只放不会改变现有构建结果的设置；WarningsAsErrors 需要先清完现存告警再逐步打开，
+    否则会立刻把 Windows/WPF 这条本地无法验证的链路搞红。
+  -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <!-- 让 IDE 样式规则参与构建分析（只报诊断，不升级为错误） -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!--
+      编译器告警即错误。测试工程暂缓（xUnit1031/CS9124 等历史告警需先清），
+      WPF 壳（LogAgent.App）本地无法编译验证，等 CI 跑绿后再纳入。
+    -->
+    <TreatWarningsAsErrors Condition="'$(MSBuildProjectName)' != 'LogAgent.Tests' and '$(MSBuildProjectName)' != 'LogAgent.App'">true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

@@ -51,6 +51,7 @@ public static class Program
                 case "config": return RunConfig(args);
                 case "doctor": return RunDoctor();
                 case "selftest": return await RunSelftestAsync();
+                case "eval": return await RunEvalAsync(args);
                 case "help" or "-h" or "--help": return PrintUsage();
                 default: return Unknown(args[0]);
             }
@@ -81,6 +82,8 @@ public static class Program
         Console.WriteLine("  config repair-sandbox    重置沙箱命令规则为当前平台默认（先备份配置）");
         Console.WriteLine("  doctor                   环境自检");
         Console.WriteLine("  selftest                 端到端自检（内嵌假模型服务，不联网）");
+        Console.WriteLine("  eval [--provider <id>] [--only <样例名>]");
+        Console.WriteLine("                           用内置样例评估真实模型（根因命中 + 幻觉检测）");
         return 0;
     }
 
@@ -320,6 +323,96 @@ public static class Program
         foreach (var r in config.Rules)
             Console.WriteLine($"  {r.TaskType}: {(r.ProviderChain.Count > 0 ? string.Join(" → ", r.ProviderChain) : "(未配置)")}");
         return 0;
+    }
+
+    /// <summary>
+    /// 用内置样例评估真实模型：跑一遍日志分析管线，检查根因是否命中、有没有编造日志里不存在的模组。
+    /// 退出码：0 全部通过 / 1 有失败 / 2 配置问题（服务器上可直接用于发布前回归）。
+    /// </summary>
+    private static async Task<int> RunEvalAsync(string[] args)
+    {
+        string? providerId = null;
+        string? only = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (args[i] is "--provider" or "-p")
+            {
+                if (i + 1 >= args.Length)
+                {
+                    Console.Error.WriteLine("--provider 需要一个 provider id");
+                    return 2;
+                }
+                providerId = args[++i];
+            }
+            else if (args[i] is "--only" or "-o")
+            {
+                if (i + 1 >= args.Length)
+                {
+                    Console.Error.WriteLine("--only 需要一个样例名关键词");
+                    return 2;
+                }
+                only = args[++i];
+            }
+        }
+
+        var config = AppConfigStore.Load();
+        if (providerId is not null)
+        {
+            var provider = config.Providers.FirstOrDefault(p => p.Id == providerId);
+            if (provider is null)
+            {
+                Console.Error.WriteLine($"找不到 provider：{providerId}（用 providers 子命令查看）");
+                return 2;
+            }
+            if (!provider.Enabled)
+            {
+                Console.Error.WriteLine($"provider 已停用：{providerId}");
+                return 2;
+            }
+            // 评测期间强制日志分析与自检都走指定 provider，避免兜底链掩盖问题
+            config.Rules.RemoveAll(r => r.TaskType is TaskType.LogAnalysis or TaskType.DeepReasoning);
+            config.Rules.Add(new RouterRule { TaskType = TaskType.LogAnalysis, ProviderChain = [providerId] });
+            config.Rules.Add(new RouterRule { TaskType = TaskType.DeepReasoning, ProviderChain = [providerId] });
+        }
+
+        var cases = only is null
+            ? LogEvalCases.All
+            : [.. LogEvalCases.All.Where(c => c.Name.Contains(only, StringComparison.OrdinalIgnoreCase))];
+        if (cases.Length == 0)
+        {
+            Console.Error.WriteLine($"没有匹配「{only}」的样例");
+            return 2;
+        }
+
+        var agent = new LogAnalysisAgent(new ModelRouter(config));
+        Console.WriteLine($"评估样例：{cases.Length} 条" +
+                          (providerId is null ? "（按配置分流）" : $"（强制 {providerId}）"));
+
+        var failures = 0;
+        foreach (var evalCase in cases)
+        {
+            var reply = await agent.AnalyzeAsync(evalCase.Log);
+            var hit = evalCase.AcceptAny.FirstOrDefault(k => reply.Contains(k, StringComparison.OrdinalIgnoreCase));
+            var hallucinated = reply.Contains(evalCase.Decoy, StringComparison.OrdinalIgnoreCase);
+            var ok = hit is not null && !hallucinated;
+            if (!ok) failures++;
+
+            Console.WriteLine($"  {(ok ? "PASS" : "FAIL")}  {evalCase.Name}");
+            if (hit is null) Console.WriteLine($"        未命中根因（可接受：{string.Join(" / ", evalCase.AcceptAny)}）");
+            if (hallucinated) Console.WriteLine($"        出现日志中不存在的「{evalCase.Decoy}」，疑似幻觉");
+            if (!ok) Console.WriteLine("        --- 报告 ---\n" + Indent(reply, 8));
+        }
+
+        var passed = cases.Length - failures;
+        Console.WriteLine($"通过率 {passed}/{cases.Length}（{(double)passed / cases.Length:P0}）");
+        return failures == 0 ? 0 : 1;
+    }
+
+    private static string Indent(string text, int spaces)
+    {
+        var pad = new string(' ', spaces);
+        var body = text.Length > 1200 ? text[..1200] + "\n…（截断）" : text;
+        return pad + body.Replace("\n", "\n" + pad);
     }
 
     private static async Task<int> RunChatAsync(string text)

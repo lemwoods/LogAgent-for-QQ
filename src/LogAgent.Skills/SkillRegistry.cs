@@ -226,7 +226,7 @@ public sealed class SkillRegistry(string builtinDir, string userDir) : ISkillToo
             if (tool.BodyTemplate is { } bodyTemplate)
             {
                 var node = JsonNode.Parse(bodyTemplate.GetRawText()) ?? new JsonObject();
-                var substituted = SubstituteNode(node, args, skill, config);
+                var substituted = SubstituteNode(node, args, skill, config) ?? new JsonObject();
                 request.Content = new StringContent(substituted.ToJsonString(JsonOptions), Encoding.UTF8, "application/json");
             }
 

@@ -67,6 +67,13 @@ public sealed class AppConfig
     /// <summary>熔断阈值：连续失败次数。</summary>
     public int CircuitBreakerThreshold { get; set; } = 3;
 
+    /// <summary>
+    /// 单个 provider 的最大尝试次数（含首次）。默认 2 = 失败后重试一次。
+    /// 超时/网络抖动在群里很常见，重试一次比立刻切走更能保住答复率；
+    /// 设 1 可关闭重试。
+    /// </summary>
+    public int ProviderMaxAttempts { get; set; } = 2;
+
     /// <summary>熔断恢复时长（秒）。</summary>
     public int CircuitBreakerRecoverySeconds { get; set; } = 60;
 
@@ -98,6 +105,9 @@ public sealed class AppConfig
 
     /// <summary>MCP 服务器（标准 Model Context Protocol 客户端）。</summary>
     public McpConfig Mcp { get; set; } = new();
+
+    /// <summary>Headless Firefox 网页渲染/截图（web_screenshot 工具）。</summary>
+    public BrowserConfig Browser { get; set; } = new();
 
     /// <summary>首次启动向导是否已完成（完成前每次启动都进入向导）。</summary>
     public bool WizardCompleted { get; set; } = false;

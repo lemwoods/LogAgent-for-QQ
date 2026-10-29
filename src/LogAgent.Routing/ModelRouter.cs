@@ -57,6 +57,8 @@ public sealed class ModelRouter
 
     /// <summary>
     /// 按任务类型执行补全：沿优先链尝试，熔断打开的跳过，失败切换下一个。
+    /// 同一 provider 内按 <see cref="AppConfig.ProviderMaxAttempts"/> 重试（默认 2 = 首次 + 1 次重试）；
+    /// 调用方取消（ct 已触发）时立即抛出，不重试、不切换。
     /// 输出预算（max_tokens）规则：思考模型按 provider.MaxTokens 全量给出（推理 token 与输出共享预算，
     /// 小预算会把回复"想没了"）；普通模型取 任务需求量 与 provider 预算 的较小值；任务未指定（0）时用 provider 预算。
     /// </summary>
@@ -70,12 +72,12 @@ public sealed class ModelRouter
                 $"尚未配置模型——请打开「模型路由」页添加 Provider 并保存（任务类型：{taskType}）");
 
         Exception? lastError = null;
+        var maxAttempts = Math.Max(1, Config.ProviderMaxAttempts);
         foreach (var providerId in chain)
         {
             var provider = Config.Providers.First(p => p.Id == providerId);
             var state = _circuits.GetOrAdd(providerId, _ => new CircuitState());
-            var now = DateTimeOffset.UtcNow;
-            if (state.IsOpen(now, Config.CircuitBreakerRecoverySeconds))
+            if (state.IsOpen(DateTimeOffset.UtcNow, Config.CircuitBreakerRecoverySeconds))
                 continue; // 熔断中，跳过
 
             var budget = Math.Max(1, provider.MaxTokens);
@@ -86,24 +88,45 @@ public sealed class ModelRouter
                     : budget;
 
             var client = _clients.GetOrAdd(providerId, id => _clientFactory(provider));
-            try
+            for (var attempt = 1; ; attempt++)
             {
-                var result = await client.CompleteAsync(
-                    new ChatRequest(messages, effectiveMax, temperature, tools), ct);
-                state.ConsecutiveFailures = 0;
-                state.OpenedAt = null;
-                Metered?.Invoke(this, new RouterMeterEvent(taskType, providerId, result.Model,
-                    true, result.PromptTokens, result.CompletionTokens, result.Latency));
-                return result;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                lastError = ex;
-                state.ConsecutiveFailures++;
-                if (state.ConsecutiveFailures >= Config.CircuitBreakerThreshold)
-                    state.OpenedAt = DateTimeOffset.UtcNow;
-                Metered?.Invoke(this, new RouterMeterEvent(taskType, providerId, provider.ChatModel,
-                    false, 0, 0, TimeSpan.Zero, ex.Message));
+                // 预算检查放在调用前：超限直接抛，不重试、不切换（由上层中止并告知用户）
+                TokenBudget.EnsureWithinBudget();
+                try
+                {
+                    var result = await client.CompleteAsync(
+                        new ChatRequest(messages, effectiveMax, temperature, tools), ct);
+                    state.ConsecutiveFailures = 0;
+                    state.OpenedAt = null;
+                    TokenBudget.Add(result.PromptTokens, result.CompletionTokens);
+                    Metered?.Invoke(this, new RouterMeterEvent(taskType, providerId, result.Model,
+                        true, result.PromptTokens, result.CompletionTokens, result.Latency));
+                    return result;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // 调用方主动取消：既不重试也不切 provider
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // 超时（HttpClient 抛 TaskCanceledException）也走这里——单 provider 时重试一次往往能救回来，
+                    // 多 provider 时重试用尽再切换
+                    lastError = ex;
+                    Metered?.Invoke(this, new RouterMeterEvent(taskType, providerId, provider.ChatModel,
+                        false, 0, 0, TimeSpan.Zero, ex.Message));
+
+                    if (attempt < maxAttempts)
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(400 * attempt), ct);
+                        continue;
+                    }
+
+                    state.ConsecutiveFailures++;
+                    if (state.ConsecutiveFailures >= Config.CircuitBreakerThreshold)
+                        state.OpenedAt = DateTimeOffset.UtcNow;
+                    break;
+                }
             }
         }
         throw new InvalidOperationException($"任务 {taskType} 的全部 provider 均失败，最后错误：{lastError?.Message}", lastError);

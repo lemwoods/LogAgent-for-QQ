@@ -193,6 +193,26 @@ Token: 与 config.json 的 Channels[qq-onebot].OneBot11.Token 一致（留空则
 ./publish/linux-x64/LogAgent.Headless send group <group_openid> "公告" --channel qq-official
 ```
 
+### 6.1 模型评估（发布前回归）
+
+换模型、改提示词之后，用内置样例跑一遍真实模型，确认根因还说得对、也没有开始编日志里不存在的东西：
+
+```bash
+# 按 config.json 的分流规则走（LogAnalysis / DeepReasoning）
+./publish/linux-x64/LogAgent.Headless eval
+
+# 强制指定 provider（推荐：避免兜底链掩盖问题）
+./publish/linux-x64/LogAgent.Headless eval --provider <providerId>
+
+# 只跑某一条（按样例名匹配，排查失败样例时用）
+./publish/linux-x64/LogAgent.Headless eval --provider <providerId> --only 内存
+```
+
+输出每条样例的 `PASS/FAIL` 与最终通过率，失败时打印报告片段。
+退出码：`0` 全通过、`1` 有失败、`2` 配置问题（provider 不存在或已停用），可直接接发布脚本或 CI。
+
+样例在 `src/LogAgent.Core/Eval/LogEvalCases.cs`，按常见故障谱每类一条；判定口径是「命中任一可接受根因」+「报告不出现日志里不存在的模组名」（幻觉检测）。
+
 ## 7. systemd
 
 ```bash

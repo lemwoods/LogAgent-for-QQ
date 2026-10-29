@@ -38,7 +38,11 @@ public static partial class LogParser
 /// <summary>本地日志统计（不烧 token）：级别分布、错误模板聚类（Drain 思想简化版）、堆栈提取。</summary>
 public static class LogStats
 {
-    public sealed record ErrorCluster(string Template, int Count, List<string> Samples);
+    /// <summary>
+    /// 错误簇。样本带行号前缀（<c>[L123] 原文</c>），首行号单独保留，
+    /// 让模型在「粘贴日志」场景下也能引用行号——此前行号在聚类这一步就被丢弃了。
+    /// </summary>
+    public sealed record ErrorCluster(string Template, int Count, List<string> Samples, int FirstLineNo = 0);
 
     public sealed record Stats(
         int TotalLines,
@@ -54,7 +58,7 @@ public static class LogStats
     public static Stats Compute(List<LogParser.LogEntry> entries)
     {
         var levels = new Dictionary<string, int>();
-        var templates = new Dictionary<string, (int Count, LogParser.LogEntry First)>();
+        var templates = new Dictionary<string, (int Count, LogParser.LogEntry First, List<LogParser.LogEntry> Samples)>();
 
         var stackTraces = new List<string>();
         var currentStack = new List<string>();
@@ -67,8 +71,10 @@ public static class LogStats
             if ((e.Level is "ERROR" or "FATAL" || LooksLikeException(e.Message)) && !IsStackLine(e.Message))
             {
                 var template = Template(e.Message);
-                var (count, first) = templates.GetValueOrDefault(template);
-                templates[template] = (count + 1, first ?? e);
+                var (count, first, samples) = templates.GetValueOrDefault(template);
+                samples ??= [];
+                if (samples.Count < 2) samples.Add(e);
+                templates[template] = (count + 1, first ?? e, samples);
             }
 
             if (IsStackLine(e.Message))
@@ -86,8 +92,11 @@ public static class LogStats
         var topErrors = templates
             .OrderByDescending(kv => kv.Value.Count)
             .Take(8)
-            .Select(kv => new ErrorCluster(kv.Key, kv.Value.Count,
-                entries.Where(e => Template(e.Message) == kv.Key).Take(2).Select(e => e.Message).ToList()))
+            .Select(kv => new ErrorCluster(
+                kv.Key,
+                kv.Value.Count,
+                [.. kv.Value.Samples.Select(s => $"[L{s.LineNo}] {s.Message}")],
+                kv.Value.First.LineNo))
             .ToList();
 
         return new Stats(

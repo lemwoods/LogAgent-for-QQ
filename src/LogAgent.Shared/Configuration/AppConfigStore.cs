@@ -34,6 +34,9 @@ public static class AppConfigStore
     /// <summary>QQ 文件与抓取日志的暂存目录。</summary>
     public static string GetFilesDirectory() => Path.Combine(GetConfigDirectory(), "files");
 
+    /// <summary>网页截图输出目录（web_screenshot 的落盘位置）。</summary>
+    public static string GetScreenshotsDirectory() => Path.Combine(GetFilesDirectory(), "screenshots");
+
     /// <summary>沙箱任务工作区根目录。</summary>
     public static string GetSandboxDirectory() => Path.Combine(GetConfigDirectory(), "sandbox");
 

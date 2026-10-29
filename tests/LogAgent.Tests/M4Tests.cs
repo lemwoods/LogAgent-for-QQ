@@ -179,7 +179,6 @@ public class LearnCommandRuntimeTests : IDisposable
         var learning = new LearningAgent(router, knowledge, new FakeWebFetcher2(), new KnowledgeConfig());
 
         var runtime = new AgentRuntime(
-            router,
             new GroupContextAgent(router, knowledge, new KnowledgeConfig { Enabled = true }),
             new LogAnalysisAgent(router),
             learning,

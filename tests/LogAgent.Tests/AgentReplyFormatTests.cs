@@ -31,7 +31,6 @@ public class AgentReplyFormatTests : IDisposable
         db.EnsureCreated();
         var sessions = new SessionManager(new SessionStore(db), router, new AgentConfig());
         var runtime = new AgentRuntime(
-            router,
             new GroupContextAgent(router),
             new LogAnalysisAgent(router),
             null,

@@ -153,15 +153,15 @@ public sealed class KnowledgeStore(string dbPath, KnowledgeConfig config, ModelR
         }
         _ftsAvailable = true;
 
-        // 6) 索引同步：行数不一致 → 全量重建（幂等，小库毫秒级）
+        // 6) 索引自检：external-content FTS 的 COUNT(*) 读的是内容表，索引为空也会显示「行数一致」
+        //    （典型场景：迁移 knowledge.db 时只拷主库、丢了 -wal）→ 用最新一条的首个词元探测，无命中即重建。
         try
         {
             var baseCount = ScalarLong(conn, "SELECT COUNT(*) FROM knowledge_items");
-            var ftsCount = ScalarLong(conn, "SELECT COUNT(*) FROM knowledge_fts");
-            if (baseCount != ftsCount)
+            if (baseCount > 0 && !FtsHasAnyHit(conn))
             {
                 Exec(conn, "INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild');");
-                Log($"知识库索引重建：{baseCount} 条");
+                Log($"知识库索引为空，已重建：{baseCount} 条");
             }
         }
         catch (SqliteException ex)
@@ -485,6 +485,22 @@ public sealed class KnowledgeStore(string dbPath, KnowledgeConfig config, ModelR
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 探测 FTS 索引是否真的可用：取最新一条记录的首个词元查一次。
+    /// 用于识别「内容表有数据、但索引为空」的不一致（external-content 表无法靠 COUNT(*) 发现）。
+    /// </summary>
+    private static bool FtsHasAnyHit(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "SELECT search_body FROM knowledge_items WHERE length(search_body) > 0 ORDER BY id DESC LIMIT 1";
+        if (cmd.ExecuteScalar() is not string text || string.IsNullOrWhiteSpace(text)) return true;
+        var token = KnowledgeText.QueryTokens(text).FirstOrDefault();
+        if (token is null) return true; // 全是停用词，无法探测
+        return ScalarLong(conn,
+            $"SELECT COUNT(*) FROM knowledge_fts WHERE knowledge_fts MATCH '\"{token}\"'") > 0;
     }
 
     private static long ScalarLong(SqliteConnection conn, string sql)

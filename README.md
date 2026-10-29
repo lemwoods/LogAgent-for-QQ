@@ -216,7 +216,7 @@ LogAgent.Shared       消息模型 / 配置 / 提示词 / Platform（shell 与�
 tools/  docs/         运维测试脚本 / 设计文档
 ```
 
-设计细节见 [docs/](docs/)：[构建工作流笔记](docs/01-Agent应用构建工作流-学习笔记.md) · [日志分析 Agent 规划](docs/02-日志分析Agent应用规划.md) · [快速上手](docs/03-快速上手.md) · [分发与首启体验](docs/04-分发与首启体验.md) · [Linux 部署](docs/05-Linux部署.md)。
+设计细节见 [docs/](docs/)：[构建工作流笔记](docs/01-Agent应用构建工作流-学习笔记.md) · [日志分析 Agent 规划](docs/02-日志分析Agent应用规划.md) · [快速上手](docs/03-快速上手.md) · [分发与首启体验](docs/04-分发与首启体验.md) · [Linux 部署](docs/05-Linux部署.md) · [实现审查与规范评估](docs/08-Agent应用实现审查与规范评估.md) · [P0 技术审查](docs/09-P0技术审查-评估集与并发串行化.md)。
 
 ## 🤝 贡献
 

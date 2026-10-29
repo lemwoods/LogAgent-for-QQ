@@ -61,7 +61,6 @@ public class AgentRuntimeTests : IDisposable
         db.EnsureCreated();
         var sessions = new SessionManager(new SessionStore(db), router, config);
         var runtime = new AgentRuntime(
-            router,
             new GroupContextAgent(router),
             new LogAnalysisAgent(router),
             learningAgent: null,
