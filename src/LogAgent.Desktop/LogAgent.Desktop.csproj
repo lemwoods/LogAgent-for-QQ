@@ -23,6 +23,8 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.13" />
     <!-- DataGrid 在 Avalonia 中独立成包，需同时引入主题 -->
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.13" />
+    <!-- 覆盖 Avalonia 的传递依赖：0.21.2 命中高危漏洞 GHSA-xrw6-gwf8-vvr9，0.21.3 为官方回补版本 -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
   </ItemGroup>
 
   <ItemGroup>
