@@ -315,6 +315,13 @@ public sealed class LogAnalysisAgent(
     {
         var parts = new List<string>();
         parts.Add($"级别统计：{DescribeLevels(stats)}");
+        if (stats.Time is { } time)
+        {
+            parts.Add($"时间范围：{time.First:HH\\:mm\\:ss}–{time.Last:HH\\:mm\\:ss}");
+            if (time.ErrorBuckets.Count > 0)
+                parts.Add("错误时间分布：" + string.Join("、",
+                    time.ErrorBuckets.Select(b => $"{b.Minute}×{b.Count}")));
+        }
         foreach (var cluster in stats.TopErrors.Take(6))
             parts.Add($"错误簇（×{cluster.Count}，首行 L{cluster.FirstLineNo}）：{cluster.Template}\n  样本：{string.Join(" | ", cluster.Samples)}");
         foreach (var (stack, i) in stats.StackTraces.Select((s, i) => (s, i)))

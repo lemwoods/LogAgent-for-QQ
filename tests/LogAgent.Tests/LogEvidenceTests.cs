@@ -90,7 +90,8 @@ public class LogEvidenceTests
         Assert.Contains("Can't keep up", string.Concat(inputs)); // 原文进了材料，模型有据可判
     }
 
-    /// <summary>模型返回空正文（推理吃光预算）时，不能把它当正常结论——必须给出可操作的说明。</summary>    [Fact]
+    /// <summary>模型返回空正文（推理吃光预算）时，不能把它当正常结论——必须给出可操作的说明。</summary>
+    [Fact]
     public async Task EmptyModelReply_ProducesActionableReport()
     {
         var config = new AppConfig

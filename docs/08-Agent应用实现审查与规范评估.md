@@ -86,8 +86,7 @@ ReAct 的正确语义是「工具失败 = 一条 observation」，不是终止�
 
 ### P2 级欠账
 
-> 状态（2026-10-30）：配置权限、Embedding 故障切换、文档漂移已修；L2 以**独立记忆表 + 搜索召回**的轻量形式落地
-> （不写知识库，见 `docs/09` §6.13）；仅剩时间窗切片。详见 `docs/09` §6.12。
+> 状态（2026-10-30）：**全部完成**——配置权限、Embedding 切换、文档漂移、L2 独立记忆、时间窗切片均已落地。详见 `docs/09` §6.12/§6.13。
 
 | 项 | 证据 | 影响 | 状态 |
 |---|---|---|---|
@@ -95,7 +94,7 @@ ReAct 的正确语义是「工具失败 = 一条 observation」，不是终止�
 | Embedding 无故障切换 | `src/LogAgent.Routing/ModelRouter.cs:117` 只取 `chain[0]` | Embedding provider 挂了直接退回纯关键词，用户无感知 | ✅ 已修 |
 | 配置明文 + 无权限 | `AppConfigStore.Save`（`src/LogAgent.Shared/Configuration/AppConfigStore.cs:61`）未设文件模式，`ApiKey` 明文 | Linux 桌面 `~/.config` 为 755 时 `config.json` 即 644 | ✅ 已修（0600） |
 | 文档与代码漂移 | `docs/02:87` 写 MAF + Semantic Kernel，实际是手写 Router + OpenAI 兼容客户端；无一处引用 MAF/SK | 后来者被误导 | ✅ 已修 |
-| 规划中的时间窗切片未实现 | `LogTools` 无时间窗相关代码 | 大日志按时间定位不可用 | ⬜ 未做 |
+| 规划中的时间窗切片未实现 | `LogTools` 无时间窗相关代码 | 大日志按时间定位不可用 | ✅ 已修（时间范围 + 错误按分钟分布） |
 
 ---
 

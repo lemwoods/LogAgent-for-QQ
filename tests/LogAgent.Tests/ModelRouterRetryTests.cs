@@ -20,7 +20,7 @@ internal sealed class ScriptedClient(string providerId, params bool[] outcomes) 
 
         var ok = n <= outcomes.Length ? outcomes[n - 1] : outcomes[^1];
         if (!ok) throw new TaskCanceledException($"simulated timeout #{n}");
-        return Task.FromResult(new ChatResult("ok", providerId, "scripted", 1, 1, TimeSpan.Zero));
+        return Task.FromResult(new ChatResult("ok", ProviderId, "scripted", 1, 1, TimeSpan.Zero));
     }
 }
 

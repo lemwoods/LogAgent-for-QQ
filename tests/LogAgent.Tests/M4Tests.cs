@@ -79,10 +79,10 @@ public class KnowledgeStoreTests : IDisposable
     }
 
     [Fact]
-    public void Delete_RemovesItem()
+    public async Task Delete_RemovesItem()
     {
         var store = Make();
-        var id = store.AddAsync("将被删除的知识", "manual").Result;
+        var id = await store.AddAsync("将被删除的知识", "manual");
         store.Delete(id);
         Assert.Empty(store.List());
     }

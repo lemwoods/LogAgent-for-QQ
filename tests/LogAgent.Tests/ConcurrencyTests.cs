@@ -36,7 +36,7 @@ internal sealed class GatedClient(string providerId, TimeSpan delay) : IChatMode
         {
             Interlocked.Decrement(ref _current);
         }
-        return new ChatResult("测试回复", providerId, "gated", 1, 1, delay);
+        return new ChatResult("测试回复", ProviderId, "gated", 1, 1, delay);
     }
 
     private static void InterlockedMax(ref int target, int value)

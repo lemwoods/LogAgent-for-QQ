@@ -28,7 +28,7 @@ public class DatabaseConcurrencyTests : IDisposable
     }
 
     [Fact]
-    public void ParallelWriters_AllSucceed()
+    public async Task ParallelWriters_AllSucceed()
     {
         var db = new Database(_dbPath);
         db.EnsureCreated();
@@ -41,7 +41,7 @@ public class DatabaseConcurrencyTests : IDisposable
 
         const int writers = 8, perWriter = 25;
         var errors = new ConcurrentBag<Exception>();
-        Task.WaitAll(Enumerable.Range(0, writers).Select(w => Task.Run(() =>
+        await Task.WhenAll(Enumerable.Range(0, writers).Select(w => Task.Run(() =>
         {
             try
             {

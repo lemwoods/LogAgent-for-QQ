@@ -59,13 +59,13 @@ public class TrainingExporterTests : IDisposable
     }
 
     [Fact]
-    public void Export_OpenAiChat_RedactsAndFilters()
+    public async Task Export_OpenAiChat_RedactsAndFilters()
     {
         var (_, store) = Seed();
         var outPath = Path.Combine(Path.GetTempPath(), $"la-exp-{Guid.NewGuid():N}.jsonl");
         var exporter = new TrainingExporter(store);
-        var result = exporter.ExportAsync(outPath,
-            new TrainingExporter.ExportOptions(ExportFormat.OpenAiChat, ["none", "adopted", "corrected"])).Result;
+        var result = await exporter.ExportAsync(outPath,
+            new TrainingExporter.ExportOptions(ExportFormat.OpenAiChat, ["none", "adopted", "corrected"]));
 
         Assert.Equal(3, result.Lines); // 空回复被跳过
         var lines = File.ReadAllLines(outPath);
@@ -77,20 +77,20 @@ public class TrainingExporterTests : IDisposable
     }
 
     [Fact]
-    public void Export_AlternateFormats_ProduceExpectedShapes()
+    public async Task Export_AlternateFormats_ProduceExpectedShapes()
     {
         var (_, store) = Seed();
         var exporter = new TrainingExporter(store);
 
         var sharegpt = Path.Combine(Path.GetTempPath(), $"la-sg-{Guid.NewGuid():N}.jsonl");
-        exporter.ExportAsync(sharegpt, new TrainingExporter.ExportOptions(ExportFormat.ShareGpt, ["none", "adopted"])).Wait();
+        await exporter.ExportAsync(sharegpt, new TrainingExporter.ExportOptions(ExportFormat.ShareGpt, ["none", "adopted"]));
         using (var doc = JsonDocument.Parse(File.ReadLines(sharegpt).First()))
         {
             Assert.Equal("human", doc.RootElement.GetProperty("conversations")[0].GetProperty("from").GetString());
         }
 
         var alpaca = Path.Combine(Path.GetTempPath(), $"la-al-{Guid.NewGuid():N}.jsonl");
-        exporter.ExportAsync(alpaca, new TrainingExporter.ExportOptions(ExportFormat.Alpaca, ["none", "adopted"])).Wait();
+        await exporter.ExportAsync(alpaca, new TrainingExporter.ExportOptions(ExportFormat.Alpaca, ["none", "adopted"]));
         using (var doc = JsonDocument.Parse(File.ReadLines(alpaca).First()))
         {
             Assert.True(doc.RootElement.TryGetProperty("instruction", out _));
@@ -98,13 +98,13 @@ public class TrainingExporterTests : IDisposable
     }
 
     [Fact]
-    public void Export_DpoPair_PairsRepeatedQuestions()
+    public async Task Export_DpoPair_PairsRepeatedQuestions()
     {
         var (_, store) = Seed();
         var outPath = Path.Combine(Path.GetTempPath(), $"la-dpo-{Guid.NewGuid():N}.jsonl");
         var exporter = new TrainingExporter(store);
-        var result = exporter.ExportAsync(outPath,
-            new TrainingExporter.ExportOptions(ExportFormat.DpoPair, ["none", "adopted", "corrected"])).Result;
+        var result = await exporter.ExportAsync(outPath,
+            new TrainingExporter.ExportOptions(ExportFormat.DpoPair, ["none", "adopted", "corrected"]));
 
         Assert.Equal(1, result.Lines); // 只有一组重复提问
         using var doc = JsonDocument.Parse(File.ReadLines(outPath).First());
@@ -113,13 +113,13 @@ public class TrainingExporterTests : IDisposable
     }
 
     [Fact]
-    public void Export_QualityTagFilter_ExcludesOthers()
+    public async Task Export_QualityTagFilter_ExcludesOthers()
     {
         var (_, store) = Seed();
         var outPath = Path.Combine(Path.GetTempPath(), $"la-q-{Guid.NewGuid():N}.jsonl");
         var exporter = new TrainingExporter(store);
-        var result = exporter.ExportAsync(outPath,
-            new TrainingExporter.ExportOptions(ExportFormat.OpenAiChat, ["adopted"])).Result;
+        var result = await exporter.ExportAsync(outPath,
+            new TrainingExporter.ExportOptions(ExportFormat.OpenAiChat, ["adopted"]));
         Assert.Equal(2, result.Lines); // corrected 那条被排除
     }
 }

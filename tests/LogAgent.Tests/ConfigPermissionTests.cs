@@ -27,6 +27,8 @@ public class ConfigPermissionTests : IDisposable
     [UnixOnlyFact]
     public void Save_SetsOwnerOnlyPermissions()
     {
+        if (OperatingSystem.IsWindows()) return; // CA1416：分析器不认识 UnixOnlyFact 的运行期跳过
+
         AppConfigStore.Save(AppConfig.CreateDefault());
 
         var mode = File.GetUnixFileMode(AppConfigStore.GetConfigPath());

@@ -32,8 +32,8 @@ sealed class FakeClient(string providerId, bool succeed, string reply = "ok") : 
         OnInput?.Invoke(input);
         var text = ReplySelector?.Invoke(input) ?? reply;
         return succeed
-            ? Task.FromResult(new ChatResult(text, providerId, "fake-model", 10, 5, TimeSpan.FromMilliseconds(1)))
-            : throw new HttpRequestException($"fake failure {providerId}");
+            ? Task.FromResult(new ChatResult(text, ProviderId, "fake-model", 10, 5, TimeSpan.FromMilliseconds(1)))
+            : throw new HttpRequestException($"fake failure {ProviderId}");
     }
 }
 

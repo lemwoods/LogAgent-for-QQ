@@ -44,13 +44,25 @@ public static class LogStats
     /// </summary>
     public sealed record ErrorCluster(string Template, int Count, List<string> Samples, int FirstLineNo = 0);
 
+    /// <summary>按分钟聚合的错误数（时间窗切片）。</summary>
+    public sealed record TimeBucket(string Minute, int Count);
+
+    /// <summary>日志时间范围与错误时间分布；日志没有可识别时间戳时为 null。</summary>
+    public sealed record TimeSlice(TimeOnly First, TimeOnly Last, IReadOnlyList<TimeBucket> ErrorBuckets);
+
+    /// <summary>行内时钟（HH:mm:ss，可带毫秒/逗号）。日期格式里的时间同样能命中，只取时刻。</summary>
+    private static readonly Regex ClockTime = new(
+        @"(?<!\d)(?<h>[01]\d|2[0-3]):(?<m>[0-5]\d):(?<s>[0-5]\d)(?:[.,]\d+)?(?!\d)",
+        RegexOptions.Compiled);
+
     public sealed record Stats(
         int TotalLines,
         int EmptyLines,
         Dictionary<string, int> LevelCounts,
         List<ErrorCluster> TopErrors,
         List<string> StackTraces,
-        DateTimeOffset ComputedAt)
+        DateTimeOffset ComputedAt,
+        TimeSlice? Time = null)
     {
         public int ErrorLike => LevelCounts.GetValueOrDefault("ERROR") + LevelCounts.GetValueOrDefault("FATAL");
     }
@@ -63,13 +75,34 @@ public static class LogStats
         var stackTraces = new List<string>();
         var currentStack = new List<string>();
 
+        TimeOnly? firstTime = null, lastTime = null;
+        var errorMinutes = new Dictionary<string, int>(StringComparer.Ordinal);
+
         foreach (var e in entries)
         {
             if (e.Level.Length > 0)
                 levels[e.Level] = levels.GetValueOrDefault(e.Level) + 1;
 
-            if ((e.Level is "ERROR" or "FATAL" || LooksLikeException(e.Message)) && !IsStackLine(e.Message))
+            var clock = ClockTime.Match(e.Message);
+            if (clock.Success)
             {
+                var time = new TimeOnly(
+                    int.Parse(clock.Groups["h"].Value),
+                    int.Parse(clock.Groups["m"].Value),
+                    int.Parse(clock.Groups["s"].Value));
+                firstTime ??= time;
+                lastTime = time;
+            }
+
+            var isError = (e.Level is "ERROR" or "FATAL" || LooksLikeException(e.Message)) && !IsStackLine(e.Message);
+            if (isError)
+            {
+                if (clock.Success)
+                {
+                    var minute = $"{clock.Groups["h"].Value}:{clock.Groups["m"].Value}";
+                    errorMinutes[minute] = errorMinutes.GetValueOrDefault(minute) + 1;
+                }
+
                 var template = Template(e.Message);
                 var (count, first, samples) = templates.GetValueOrDefault(template);
                 samples ??= [];
@@ -99,13 +132,22 @@ public static class LogStats
                 kv.Value.First.LineNo))
             .ToList();
 
+        var timeSlice = firstTime is { } startTime && lastTime is { } endTime
+            ? new TimeSlice(startTime, endTime, errorMinutes
+                .OrderByDescending(kv => kv.Value)
+                .Take(8)
+                .Select(kv => new TimeBucket(kv.Key, kv.Value))
+                .ToList())
+            : null;
+
         return new Stats(
             entries.Count,
             entries.Count(e => e.Message.Length == 0),
             levels,
             topErrors,
             stackTraces.Take(3).ToList(),
-            DateTimeOffset.Now);
+            DateTimeOffset.Now,
+            timeSlice);
     }
 
     /// <summary>消息模板化：数字/UUID/IP/HEX/引号串 → 占位符，同类错误聚成一簇。</summary>
