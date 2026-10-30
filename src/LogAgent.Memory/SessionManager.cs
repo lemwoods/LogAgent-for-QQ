@@ -158,7 +158,7 @@ public sealed class SessionManager(SessionStore store, ModelRouter router, Agent
 
     private SessionContext BuildContext(ActiveSession session)
     {
-        var window = session.Window.TakeLast(24).ToList();
+        var window = session.Window.TakeLast(Math.Max(1, config.ContextWindowTurns)).ToList();
         var summaries = store.GetRecentSummaries(session.ChatId, 3);
         return new SessionContext(session.Id, session.ChatId, summaries, window);
     }

@@ -73,6 +73,23 @@ public sealed class AgentRuntime(
                 $"这条消息的模型用量超过预算（{ex.Used}/{ex.Limit} tokens），已中止。可以把日志拆小一点，或调大配置里的 MessageMaxTokens。",
                 message.MessageId, ct);
         }
+        catch (Exception ex) when (IsContextOverflow(ex))
+        {
+            // 模型报上下文超长：压缩会话（L1 摘要 + 新窗口）后重试一次，而不是回用户一句内部错误
+            RuntimeLog?.Invoke(this, "[上下文] 超出模型窗口，压缩会话后重试");
+            await sessions.CutAsync(message.ChatId, "context", ct);
+            try
+            {
+                await HandleCoreAsync(sender, message, deadline.Token);
+            }
+            catch (Exception retryEx) when (IsContextOverflow(retryEx))
+            {
+                RuntimeLog?.Invoke(this, "[上下文] 压缩后仍超限");
+                await sender.SendTextAsync(message.ChatId, message.ChatType,
+                    "这条内容太长，压缩历史后仍超出模型窗口；请把日志分段发送，或只发关键片段。",
+                    message.MessageId, ct);
+            }
+        }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             RuntimeLog?.Invoke(this, $"[超时] 处理超过 {agentConfig.MessageTimeoutSeconds}s，已中止");
@@ -152,6 +169,10 @@ public sealed class AgentRuntime(
         catch (TokenBudgetExceededException)
         {
             throw; // 预算击穿：交给上层给出明确提示
+        }
+        catch (Exception ex) when (IsContextOverflow(ex))
+        {
+            throw; // 上下文超长：交给上层压缩会话后重试
         }
         catch (Exception ex)
         {
@@ -328,6 +349,24 @@ public sealed class AgentRuntime(
         for (var i = 0; i < text.Length; i += size)
             segments.Add(text.Substring(i, Math.Min(size, text.Length - i)));
         return segments;
+    }
+
+    /// <summary>
+    /// 模型/服务端返回「上下文超长」类错误。命中后应压缩会话重试，而不是把内部错误回给用户。
+    /// 各家措辞不同，这里按常见片段匹配。
+    /// </summary>
+    private static bool IsContextOverflow(Exception ex)
+    {
+        var msg = ex.Message;
+        return msg.Contains("context_length_exceeded", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("maximum context length", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("context length", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("too many tokens", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("prompt is too long", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("input is too long", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("exceeds the context", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("上下文长度", StringComparison.Ordinal)
+            || msg.Contains("超出上下文", StringComparison.Ordinal);
     }
 
     private static bool IsNewTopicCommand(BotMessage m)

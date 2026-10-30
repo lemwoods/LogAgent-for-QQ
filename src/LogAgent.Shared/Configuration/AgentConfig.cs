@@ -13,10 +13,13 @@ public sealed class AgentConfig
     public int SessionIdleTimeoutMinutes { get; set; } = 30;
 
     /// <summary>会话容量切断：token 估算上限。</summary>
-    public int SessionMaxTokens { get; set; } = 8000;
+    public int SessionMaxTokens { get; set; } = 900_000;
 
     /// <summary>会话容量切断：消息数上限。</summary>
     public int SessionMaxMessages { get; set; } = 200;
+
+    /// <summary>送进模型的历史窗口保留多少轮（user+assistant 各算一条消息）。</summary>
+    public int ContextWindowTurns { get; set; } = 50;
 
     /// <summary>
     /// 单条消息的处理时限（秒）。超时中止并告知用户，避免一次故障把整个会话长时间占住。
