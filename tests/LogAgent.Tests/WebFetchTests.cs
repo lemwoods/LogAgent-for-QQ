@@ -118,8 +118,13 @@ public class WebFetchTests : IDisposable
 
     private static BotMessage Msg(string text) => new()
     {
-        MessageId = "m1", ChatId = "777", ChatType = ChatType.Group,
-        SenderId = "1", SenderName = "柠枺", Text = text, MentionedMe = true,
+        MessageId = "m1",
+        ChatId = "777",
+        ChatType = ChatType.Group,
+        SenderId = "1",
+        SenderName = "柠枺",
+        Text = text,
+        MentionedMe = true,
     };
 
     [Fact]

@@ -27,8 +27,13 @@ public class MessageEnricherTests : IDisposable
 
     private static BotMessage Msg(string text, IReadOnlyList<MessageAttachment>? attachments = null) => new()
     {
-        MessageId = "m1", ChatId = "777", ChatType = ChatType.Group,
-        SenderId = "1", SenderName = "柠枺", Text = text, MentionedMe = true,
+        MessageId = "m1",
+        ChatId = "777",
+        ChatType = ChatType.Group,
+        SenderId = "1",
+        SenderName = "柠枺",
+        Text = text,
+        MentionedMe = true,
         Attachments = attachments,
     };
 
@@ -284,8 +289,13 @@ public class VisionSupportTests
 
         var message = new BotMessage
         {
-            MessageId = "m1", ChatId = "777", ChatType = ChatType.Group,
-            SenderId = "1", SenderName = "群友", Text = "看看这个报错", MentionedMe = true,
+            MessageId = "m1",
+            ChatId = "777",
+            ChatType = ChatType.Group,
+            SenderId = "1",
+            SenderName = "群友",
+            Text = "看看这个报错",
+            MentionedMe = true,
             ImageUrls = ["https://example.test/shot.jpg"],
         };
         var window = new List<ChatTurn> { ChatTurn.User("群友: 看看这个报错") };
@@ -544,9 +554,13 @@ public class RuntimeEnrichmentTests : IDisposable
 
         var message = new BotMessage
         {
-            MessageId = "m9", ChatId = "888", ChatType = ChatType.Group,
-            SenderId = "1", SenderName = "柠枺",
-            Text = "帮我看看 https://logshare.cn/J8x9Flt 谢谢", MentionedMe = true,
+            MessageId = "m9",
+            ChatId = "888",
+            ChatType = ChatType.Group,
+            SenderId = "1",
+            SenderName = "柠枺",
+            Text = "帮我看看 https://logshare.cn/J8x9Flt 谢谢",
+            MentionedMe = true,
         };
         var bridge = new RecordingBridge();
         await runtime.OnMessageAsync(bridge, message);

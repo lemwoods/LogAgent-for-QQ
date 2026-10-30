@@ -190,8 +190,13 @@ public class LearnCommandRuntimeTests : IDisposable
 
     private static BotMessage Msg(string text, bool mentioned = true) => new()
     {
-        MessageId = "m1", ChatId = "777", ChatType = ChatType.Group,
-        SenderId = "1", SenderName = "柠枺", Text = text, MentionedMe = mentioned,
+        MessageId = "m1",
+        ChatId = "777",
+        ChatType = ChatType.Group,
+        SenderId = "1",
+        SenderName = "柠枺",
+        Text = text,
+        MentionedMe = mentioned,
     };
 
     [Fact]

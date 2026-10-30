@@ -55,12 +55,13 @@ jobs:
           dotnet build tests/LogAgent.Tests/LogAgent.Tests.csproj -v q
       - name: Test
         run: dotnet test tests/LogAgent.Tests/LogAgent.Tests.csproj --nologo
-      # 格式门：先覆盖已通过校验的两个项目，稳定后再逐步扩到全部 src 项目。
+      # 格式门：覆盖已校验的项目，稳定后继续扩展。
       # 只在 Linux 跑——Windows 检出的 CRLF 会和 .editorconfig 的 end_of_line=lf 冲突。
-      - name: Format check (src, incremental rollout)
+      - name: Format check (Core + Headless + Tests)
         run: |
           dotnet format src/LogAgent.Core/LogAgent.Core.csproj --verify-no-changes --no-restore
           dotnet format src/LogAgent.Headless/LogAgent.Headless.csproj --verify-no-changes --no-restore
+          dotnet format tests/LogAgent.Tests/LogAgent.Tests.csproj --verify-no-changes --no-restore
       - name: Headless selftest
         run: dotnet run --project src/LogAgent.Headless --no-build -- selftest
       - name: Doctor (informational)

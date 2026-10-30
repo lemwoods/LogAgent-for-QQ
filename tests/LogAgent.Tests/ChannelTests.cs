@@ -23,7 +23,10 @@ public class ChannelConfigTests
         config.OneBot11 = new OneBot11Config { Enabled = true, Port = 6702, Token = "ob" };
         config.OfficialBot = new OfficialBotConfig
         {
-            Enabled = true, AppId = "app", AppSecret = "secret", Sandbox = true,
+            Enabled = true,
+            AppId = "app",
+            AppSecret = "secret",
+            Sandbox = true,
         };
 #pragma warning restore CS0618
 
@@ -158,13 +161,22 @@ public class ChannelManagerTests
     {
         var official = new ChannelConfig
         {
-            Id = "qq-official", Name = "官方", Transport = ChannelTransport.Official,
-            Enabled = true, Priority = 100, AppId = "a", AppSecret = "b",
+            Id = "qq-official",
+            Name = "官方",
+            Transport = ChannelTransport.Official,
+            Enabled = true,
+            Priority = 100,
+            AppId = "a",
+            AppSecret = "b",
         };
         var oneBot = new ChannelConfig
         {
-            Id = "qq-onebot", Name = "OneBot", Transport = ChannelTransport.OneBot11,
-            Enabled = true, Priority = 50, OneBot11 = new OneBot11Config { Port = 6701 },
+            Id = "qq-onebot",
+            Name = "OneBot",
+            Transport = ChannelTransport.OneBot11,
+            Enabled = true,
+            Priority = 50,
+            OneBot11 = new OneBot11Config { Port = 6701 },
         };
         var started = new List<string>();
         var fakes = new Dictionary<string, FakeConnection>
@@ -200,13 +212,22 @@ public class ChannelManagerTests
     {
         var bad = new ChannelConfig
         {
-            Id = "bad", Name = "坏频道", Transport = ChannelTransport.Official,
-            Enabled = true, Priority = 100, AppId = "a", AppSecret = "b",
+            Id = "bad",
+            Name = "坏频道",
+            Transport = ChannelTransport.Official,
+            Enabled = true,
+            Priority = 100,
+            AppId = "a",
+            AppSecret = "b",
         };
         var good = new ChannelConfig
         {
-            Id = "good", Name = "好频道", Transport = ChannelTransport.OneBot11,
-            Enabled = true, Priority = 50, OneBot11 = new OneBot11Config { Port = 6701 },
+            Id = "good",
+            Name = "好频道",
+            Transport = ChannelTransport.OneBot11,
+            Enabled = true,
+            Priority = 50,
+            OneBot11 = new OneBot11Config { Port = 6701 },
         };
         var fake = new FakeConnection("good");
         await using var manager = new ChannelManager([bad, good], c =>
@@ -222,9 +243,15 @@ public class ChannelManagerTests
     {
         var channel = new ChannelConfig
         {
-            Id = "qq-official", Name = "官方", Transport = ChannelTransport.Official,
-            Enabled = true, Priority = 100, AppId = "a", AppSecret = "b",
-            MergeMessages = true, MergeWindowMs = 40,
+            Id = "qq-official",
+            Name = "官方",
+            Transport = ChannelTransport.Official,
+            Enabled = true,
+            Priority = 100,
+            AppId = "a",
+            AppSecret = "b",
+            MergeMessages = true,
+            MergeWindowMs = 40,
             Capabilities = new ChannelCapabilities { Merged = true },
         };
         var fake = new FakeConnection("official");
@@ -254,8 +281,13 @@ public class ChannelManagerTests
     {
         var channel = new ChannelConfig
         {
-            Id = "qq-official", Name = "官方", Transport = ChannelTransport.Official,
-            Enabled = true, Priority = 100, AppId = "a", AppSecret = "b",
+            Id = "qq-official",
+            Name = "官方",
+            Transport = ChannelTransport.Official,
+            Enabled = true,
+            Priority = 100,
+            AppId = "a",
+            AppSecret = "b",
             MergeMessages = false,
             Capabilities = new ChannelCapabilities { Markdown = true, Merged = true },
         };
@@ -278,9 +310,15 @@ public class ChannelManagerTests
     {
         var channel = new ChannelConfig
         {
-            Id = "qq-official", Name = "官方", Transport = ChannelTransport.Official,
-            Enabled = true, Priority = 100, AppId = "a", AppSecret = "b",
-            MergeMessages = true, MergeWindowMs = 500,
+            Id = "qq-official",
+            Name = "官方",
+            Transport = ChannelTransport.Official,
+            Enabled = true,
+            Priority = 100,
+            AppId = "a",
+            AppSecret = "b",
+            MergeMessages = true,
+            MergeWindowMs = 500,
         };
         var fake = new FakeConnection("official");
         await using var manager = new ChannelManager([channel], _ => fake);
@@ -300,8 +338,13 @@ public class ChannelManagerTests
     {
         var channel = new ChannelConfig
         {
-            Id = "qq-official", Name = "官方", Transport = ChannelTransport.Official,
-            Enabled = true, Priority = 100, AppId = "a", AppSecret = "b",
+            Id = "qq-official",
+            Name = "官方",
+            Transport = ChannelTransport.Official,
+            Enabled = true,
+            Priority = 100,
+            AppId = "a",
+            AppSecret = "b",
             Capabilities = new ChannelCapabilities { Merged = true },
         };
         var fake = new FakeConnection("official") { ForwardSupported = true };
