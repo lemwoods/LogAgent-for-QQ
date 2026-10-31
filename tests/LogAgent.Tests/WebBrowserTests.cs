@@ -6,12 +6,16 @@ namespace LogAgent.Tests;
 
 // ─────────────────────────── web_screenshot（headless Firefox） ───────────────────────────
 
-/// <summary>仅在本机装了 Firefox 时运行；CI 没装则跳过，避免把可选依赖变成必过项。</summary>
+/// <summary>仅在本机装了 Firefox 且能创建 user namespace 时运行；CI 容器里通常两者都不满足。</summary>
 public sealed class FirefoxFactAttribute : FactAttribute
 {
     public FirefoxFactAttribute()
     {
         if (FirefoxBrowser.FindExecutable() is null) Skip = "未安装 Firefox";
+        // GitHub Actions 等容器禁止 unshare(CLONE_NEWPID)，Firefox 内容沙箱起不来，
+        // marionette 永远不 ready；这不是代码回归，跳过而不是让 CI 红。
+        else if (Environment.GetEnvironmentVariable("CI") is { Length: > 0 })
+            Skip = "CI 容器不允许 Firefox 创建 user namespace（unshare EPERM）";
     }
 }
 
