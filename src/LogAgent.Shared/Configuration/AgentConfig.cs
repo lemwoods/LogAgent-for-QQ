@@ -29,9 +29,10 @@ public sealed class AgentConfig
 
     /// <summary>
     /// 单条消息的 token 预算（含工具多轮与自检）。超过后中止本次处理并告知用户，不降级到其他模型。
-    /// 默认 60000：正常图文问答远低于此值，多轮工具分析留足余量；设 0 或负数表示不限制。
+    /// 默认 900000：与 glm-5.3-flash 的 1M 窗口对齐，推理 token 也计入，多轮工具分析留足余量。
+    /// 设 0 或负数表示不限制。
     /// </summary>
-    public int MessageMaxTokens { get; set; } = 60000;
+    public int MessageMaxTokens { get; set; } = 900_000;
 
     /// <summary>
     /// run_shell 是否先经 AI 安全审核（默认开启）。关闭后只剩沙箱白名单/黑名单，
