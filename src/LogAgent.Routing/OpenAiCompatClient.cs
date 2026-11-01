@@ -25,6 +25,9 @@ public sealed class OpenAiCompatClient(ProviderConfig config, HttpClient? httpCl
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(c.TimeoutSeconds) };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", c.ApiKey);
+        // OpenCode Go 端点（/inference/go/）要求会话头用于粘性路由；zen 端点不需要。
+        if (c.Endpoint.Contains("/inference/go/", StringComparison.OrdinalIgnoreCase))
+            client.DefaultRequestHeaders.TryAddWithoutValidation("x-opencode-session", Guid.NewGuid().ToString());
         return client;
     }
 
